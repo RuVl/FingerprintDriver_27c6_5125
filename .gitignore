@@ -1,0 +1,30 @@
+# --- окружение и IDE ---
+.venv/
+__pycache__/
+.idea/
+*.pyc
+
+# --- проприетарные файлы Goodix (не распространять) ---
+win-driver/
+Fingerprint_*.zip
+
+# --- локальные данные и логи (см. CLAUDE.md) ---
+dumps/
+SYSTEM_CHANGES.local.md
+
+# --- локально распакованные зависимости (не в систему) ---
+deps/
+
+# --- форк libfprint — ОТДЕЛЬНЫЙ git-репозиторий (ветка buildpackage),
+#     ведётся своей историей; во внешний репозиторий не встраиваем ---
+libfprint/
+
+# --- скомпилированные бинарники и производные данные harness ---
+tools/algo/algo_enroll
+tools/algo/algo_eval
+tools/algo/algo_eval2
+tools/algo/algo_sweep
+tools/algo/algo_version
+*.o
+*.so
+*.bin
