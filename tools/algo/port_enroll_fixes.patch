@@ -1,0 +1,266 @@
+--- a/goodix-chicago-enrollment.c	2026-09-28 21:36:02.289112161 +0300
++++ b/goodix-chicago-enrollment.c	2026-09-28 21:36:02.290142540 +0300
+@@ -1034,17 +1034,28 @@
+   return TRUE;
+ }
+ 
++/* EFIXES: AlgoChicago 0x180052870 (from 0x1800503f0) takes two more inputs from the
++ * 0x180050730 context: the inlier count of the transform (9th argument of 0x180050730)
++ * gates the "activity > 17" branch — (occupancy > 40 && inliers >= 8) || inliers >= 9 —
++ * and the occupancy (context +0x40) is computed only while still -1, i.e. by the first
++ * map pair, and reused for the second.  inliers = 8 and a fresh occupancy give the
++ * previous behaviour. */
+ static gint
+-config1_selector_score (const guint counts[4],
+-                        guint       total)
++config1_selector_score_ex (const guint counts[4],
++                           guint       total,
++                           gint        inliers,
++                           gint       *occupancy_io)
+ {
+   const guint pixels = GOODIX_CHICAGO_METRIC_MAP_WIDTH *
+                        GOODIX_CHICAGO_METRIC_MAP_HEIGHT;
+-  const gint occupancy =
+-    (counts[3] * 0x100) / (counts[1] + counts[2] + counts[3] + 1);
++  gint occupancy;
+   gint score;
+   gint activity;
+ 
++  if (*occupancy_io < 0)
++    *occupancy_io = (counts[3] * 0x100) / (counts[1] + counts[2] + counts[3] + 1);
++  occupancy = *occupancy_io;
++
+   if (total == 0)
+     return 128;
+   if (total > pixels / 2)
+@@ -1056,7 +1067,7 @@
+   if (activity > 23 ||
+       (activity > 18 && occupancy > 62) ||
+       (activity > 19 && occupancy > 50) ||
+-      (activity > 17 && occupancy > 40) ||
++      (activity > 17 && ((occupancy > 40 && inliers >= 8) || inliers >= 9)) ||
+       (score > 230 && activity > 16))
+     return score;
+   return 128;
+@@ -1099,6 +1110,15 @@
+   *count_one = counts[3];
+ }
+ 
++gint goodix_chicago_enrollment_calculate_config1_metrics_ex (
++  const GoodixChicagoMetricData *new_metric_data,
++  const GoodixChicagoMetricData *old_metric_data,
++  const gint32                   transform[6],
++  gint                           inliers,
++  gint                          *occupancy_io,
++  gint                          *metric_a,
++  gint                          *metric_b);
++
+ gint
+ goodix_chicago_enrollment_calculate_config1_metrics (
+   const GoodixChicagoMetricData *new_metric_data,
+@@ -1107,6 +1127,23 @@
+   gint                          *metric_a,
+   gint                          *metric_b)
+ {
++  gint occupancy = -1;
++
++  return goodix_chicago_enrollment_calculate_config1_metrics_ex (
++    new_metric_data, old_metric_data, transform, 8, &occupancy, metric_a, metric_b);
++}
++
++/* EFIXES: one map pair of 0x180050730 (0x1800503f0 with the 0x180052870 selector). */
++gint
++goodix_chicago_enrollment_calculate_config1_metrics_ex (
++  const GoodixChicagoMetricData *new_metric_data,
++  const GoodixChicagoMetricData *old_metric_data,
++  const gint32                   transform[6],
++  gint                           inliers,
++  gint                          *occupancy_io,
++  gint                          *metric_a,
++  gint                          *metric_b)
++{
+   guint counts[4];
+   guint total;
+   const guint pixels = GOODIX_CHICAGO_METRIC_MAP_WIDTH *
+@@ -1127,7 +1164,7 @@
+         new_metric_data->coarse_mask, old_metric_data->coarse_mask,
+         transform, counts, &total))
+     return 0;
+-  selector_score = config1_selector_score (counts, total);
++  selector_score = config1_selector_score_ex (counts, total, inliers, occupancy_io);
+   *metric_b = (total * 0x100 + pixels / 2) / pixels;
+   {
+     const guint without_both_one = counts[0] + counts[1] + counts[2];
+@@ -1141,6 +1178,57 @@
+   return selector_score;
+ }
+ 
++/* EFIXES: AlgoChicago 0x180018720 calls 0x180050730 (the matcher's selector/agreement
++ * metric, not a separate relation metric) for every pair with > 4 inliers: 7th argument
++ * (agreement, taken from the second map pair when it is higher and the first selector is
++ * > 220) and 8th argument. */
++static void
++efix_relation_metrics (const GoodixChicagoMetricData *new_metric_data,
++                       const GoodixChicagoMetricData *old_metric_data,
++                       const gint32                   transform[6],
++                       gint                          *agreement,
++                       gint                          *coverage)
++{
++  GoodixChicagoMetricData p2 = *new_metric_data;
++  GoodixChicagoMetricData g2 = *old_metric_data;
++  gint a = 0, c = 0, a2 = 0, c2 = 0, selector, occupancy = -1;
++
++  /* 0x1800189ac: inlier count argument 0 (gates the selector, 0x180052870) */
++  selector = goodix_chicago_enrollment_calculate_config1_metrics_ex (
++    new_metric_data, old_metric_data, transform, 0, &occupancy, &a, &c);
++  memcpy (p2.primary, new_metric_data->secondary, sizeof (p2.primary));
++  memcpy (g2.primary, old_metric_data->secondary, sizeof (g2.primary));
++  goodix_chicago_enrollment_calculate_config1_metrics_ex (&p2, &g2, transform, 0, &occupancy,
++                                                          &a2, &c2);
++  if (a2 > a && selector > 220)
++    a = a2;
++  *agreement = a;
++  *coverage = c;
++}
++
++/* EFIXES: return value of 0x180050730 (0x180050b10..0x180050b29): the second map pair's
++ * selector when it is higher and its agreement is > 195. */
++static gint
++efix_selector (const GoodixChicagoMetricData *new_metric_data,
++               const GoodixChicagoMetricData *old_metric_data,
++               const gint32                   transform[6])
++{
++  GoodixChicagoMetricData p2 = *new_metric_data;
++  GoodixChicagoMetricData g2 = *old_metric_data;
++  gint a = 0, c = 0, a2 = 0, c2 = 0, selector, s2, occupancy = -1;
++
++  /* 0x180018f1c: inlier count argument 0, as above */
++  selector = goodix_chicago_enrollment_calculate_config1_metrics_ex (
++    new_metric_data, old_metric_data, transform, 0, &occupancy, &a, &c);
++  memcpy (p2.primary, new_metric_data->secondary, sizeof (p2.primary));
++  memcpy (g2.primary, old_metric_data->secondary, sizeof (g2.primary));
++  s2 = goodix_chicago_enrollment_calculate_config1_metrics_ex (&p2, &g2, transform, 0,
++                                                               &occupancy, &a2, &c2);
++  if (s2 > selector && a2 > 195)
++    selector = s2;
++  return selector;
++}
++
+ gboolean
+ goodix_chicago_enrollment_calculate_study_metrics (
+   const GoodixChicagoMetricData *new_metric_data,
+@@ -1331,10 +1419,9 @@
+                                                 &transform);
+   relation->inlier_count = transform.inlier_count;
+   memcpy (relation->transform, transform.values, sizeof (relation->transform));
+-  goodix_chicago_enrollment_calculate_relation_metrics (
+-    new_metric_data->primary, new_metric_data->coarse_mask,
+-    old_metric_data->primary, old_metric_data->coarse_mask,
+-    relation->transform, &native_metric_a, &native_metric_b);
++  if (transform.inlier_count > 4)
++    efix_relation_metrics (new_metric_data, old_metric_data, relation->transform,
++                           &native_metric_a, &native_metric_b);
+   if (metric_a)
+     *metric_a = native_metric_a;
+   if (metric_b)
+@@ -2440,7 +2527,7 @@
+        * list, but the triangular relation table keeps every affine result
+        * with at least six inliers.  Only weaker transforms become the
+        * identity sentinel. */
+-      if (relations[index].inlier_count < 6)
++      if (!evidence[index])   /* EFIXES: 0x1800189b7..0x180018a58 keep only accepted evidence */
+         {
+           relations[index].inlier_count = -1;
+           memcpy (relations[index].transform,
+@@ -2458,17 +2545,17 @@
+       if (!evidence[index] || relations[index].inlier_count < 6 ||
+           (has_group && old_subtemplates[index]->group_state != 1))
+         continue;
+-      score = goodix_chicago_enrollment_calculate_config1_metrics (
+-        metric_data, &old_subtemplates[index]->metric_data,
+-        relations[index].transform, &metric_a, &metric_b);
+       if (candidate == G_MAXUINT ||
+           relations[index].inlier_count > best_inliers)
+         {
+           candidate = index;
+           best_inliers = relations[index].inlier_count;
+-          selector_score = score;
+         }
+     }
++  /* EFIXES: the selector is the full 0x180050730 result (second map pair included). */
++  if (candidate != G_MAXUINT)
++    selector_score = efix_selector (metric_data, &old_subtemplates[candidate]->metric_data,
++                                    relations[candidate].transform);
+ 
+   new_subtemplate = g_new0 (GoodixChicagoSubtemplate, 1);
+   new_subtemplate->record_count = record_count;
+@@ -2488,8 +2575,8 @@
+         {
+           self->group_anchor = candidate;
+           self->has_group_anchor = TRUE;
+-          for (guint index = 0; index < old_count; index++)
+-            old_subtemplates[index]->group_state = 1;
++          /* EFIXES: 0x180018e40 flags only the anchor candidate and the new sample. */
++          old_subtemplates[candidate]->group_state = 1;
+         }
+     }
+   g_ptr_array_add (self->subtemplates, new_subtemplate);
+@@ -3386,7 +3473,23 @@
+   record->orientation = orientation < 0x80 ?
+                         (gint16) orientation << 8 :
+                         (gint16) - (((gint) orientation - 0x80) * 0x100);
+-  record->descriptor[0] = 2;
++  {
++    /* EFIXES: the dword +0xc is the boundary class that getFeature stores (see
++     * goodix-chicago-feature.c: 1 near the top, 2 near the bottom, else 0); the DLL's
++     * unpacked gallery records carry the same class computed from the unpacked y
++     * (checked against the records seen by 0x18005b110).  The matcher's pass-2
++     * cross-class pairing depends on it.  Upstream stored 2 for every record. */
++    guint32 boundary;
++
++    if ((guint16) record->refined_y < 0x1400)
++      boundary = 1;
++    else if ((guint16) record->refined_y >=
++             (guint16) (GOODIX_CHICAGO_FEATURE_HEIGHT * 0x100 - 0x1400))
++      boundary = 2;
++    else
++      boundary = 0;
++    memcpy (record->descriptor, &boundary, sizeof (boundary));
++  }
+   for (guint index = 0; index < 8; index++)
+     {
+       guint8 first = packed[4 + index * 2];
+@@ -3600,7 +3703,18 @@
+   if (!packed_cursor_container (&cursor, 0x93, &scheduler_state) ||
+       scheduler_state.size != 20)
+     goto invalid;
+-  /* The 0x93 scheduler state is fixed-size and regenerated by pack(). */
++  /* EFIXES: the 0x93 state carries T+0x87e0 (group anchor) and T+0x87ec (group flag). */
++  {
++    guint32 anchor, unused, flag;
++
++    if (!packed_cursor_scalar (&scheduler_state, 0xf2, &anchor) ||
++        !packed_cursor_scalar (&scheduler_state, 0xf3, &unused) ||
++        !packed_cursor_scalar (&scheduler_state, 0xf4, &unused) ||
++        !packed_cursor_scalar (&scheduler_state, 0xf5, &flag))
++      goto invalid;
++    self->has_group_anchor = flag == 1 && anchor < subtemplate_count;
++    self->group_anchor = self->has_group_anchor ? anchor : 0;
++  }
+   if (!packed_cursor_container (&cursor, 0x94, &matcher_state) ||
+       matcher_state.size != 1328 ||
+       cursor.offset != cursor.size)
+@@ -3720,10 +3834,11 @@
+ 
+   g_byte_array_append (packed, (const guint8[]){ 0x93 }, 1);
+   packed_append_u32 (packed, 20);
+-  packed_append_scalar (packed, 0xf2, grouped > 1 ? 0 : G_MAXUINT32);
++  /* EFIXES: 0x180034370 writes T+0x87e0 (group anchor) and T+0x87ec (group flag). */
++  packed_append_scalar (packed, 0xf2, self->has_group_anchor ? self->group_anchor : G_MAXUINT32);
+   packed_append_scalar (packed, 0xf3, G_MAXUINT32);
+   packed_append_scalar (packed, 0xf4, G_MAXUINT32);
+-  packed_append_scalar (packed, 0xf5, grouped > 1 ? 1 : 0);
++  packed_append_scalar (packed, 0xf5, self->has_group_anchor ? 1 : 0);
+   packed_append_matcher_state (packed, self);
+ 
+   if (packed->len != expected_size)

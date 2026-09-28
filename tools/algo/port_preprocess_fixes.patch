@@ -1,0 +1,22 @@
+--- a/goodix-chicago-preprocess.c	2026-09-28 07:04:32.026458651 +0300
++++ b/goodix-chicago-preprocess.c	2026-09-28 07:04:32.036547968 +0300
+@@ -231,7 +231,7 @@
+       if (ABS ((gint64) ratio - 0x2000) < 0x148)
+         self->adaptive_multiplier[pixel] =
+           ((guint64) self->adaptive_multiplier[pixel] *
+-           self->adaptive_sample_count + ratio + new_count / 2) / new_count;
++           (new_count - 1) + ratio + new_count / 2) / new_count;
+     }
+   self->adaptive_sample_count = new_count;
+ }
+@@ -380,6 +380,10 @@
+       guint32 gain = self->normalized_gain[pixel];
+       guint32 value;
+ 
++      /* AlgoChicago 0x18004ce60: framenum <= limit (3 for mode 24, C=1) -> unity gain. */
++      if (self->temporal_sample_count <= 3)
++        gain = 0x2000u;
++
+       if (apply_adaptive_multiplier)
+         gain = ((guint32) gain * self->adaptive_multiplier[pixel] +
+                 0x1000u) >> 13;

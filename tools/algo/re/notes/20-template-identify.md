@@ -1,312 +1,220 @@
-# AlgoMilan — формат шаблона и путь идентификации
+# Шаблон, регистрация, идентификация, матчер (AlgoMilan)
 
-DLL: `win-driver/AlgoMilan.dll` (Milan_v_3.00.20), imagebase `0x180000000`.
-Инструмент: `cd tools && ../.venv/bin/python -m fwre.dump AlgoMilan.dll func/range/... <addr>`.
-Все адреса — VA (imagebase + RVA). Read-only, без железа.
+Адреса — AlgoMilan (`Milan_v_3.00.20`). AlgoChicago экспортирует те же функции с тем же
+числом аргументов (адреса — 00), тип шаблона у него 24, внутренности не разбирались.
+Как их зовёт EngineAdapter — 30.
 
----
+## Holder и объект T
 
-## 0. Короткий вывод (детали ниже)
+**holder** — 8-байтовый malloc-слот, `*holder == T`. enrolGetTemplate и templateUnPack
+отдают holder; identifyImage берёт массив holder'ов, identifytemplate — два holder'а. (ТОЧНО)
 
-- **Формат шаблона enroll == формат, который ждёт identify.** Конвертация НЕ нужна.
-  `enrolGetTemplate` возвращает готовый живой шаблон, пригодный для `identifytemplate`
-  и для `identifyImage` без доп. шагов. (ТОЧНО)
-- **`base+0xf810` (0x18000f810) — это НЕ study, а ДЕСТРУКТОР шаблона** (`freeTemplate`).
-  Он освобождает все под-буферы записей, сами записи и объект, и обнуляет holder.
-  Наш C-код зовёт его на галерейном шаблоне → шаблон освобождается → `identifytemplate`
-  копирует освобождённый объект и разыменовывает висячие указатели записей → **падение
-  на `[r14+0x148]`**. Это и есть причина краша. (ТОЧНО)
-- Настоящий «study/finalize» происходит УЖЕ ВНУТРИ `enrolAddImage` (через
-  `fingerFeatureRegister` 0x180017000), который заполняет счётчик `+0x1c` и записи `+0x28`.
-  Экспорт `templateStudy` (0x18000e480) — это отдельная адаптивная до-регистрация
-  (learning/update) поверх ГЛОБАЛЬНОГО контекста, к построению галереи отношения не имеет. (ТОЧНО)
-
----
-
-## 1. Сигнатуры (MS x64 ABI) и возвраты
-
-Соглашение об «указателе шаблона»: везде используется **holder** — 8-байтовый слот,
-в котором лежит указатель на объект шаблона T: `*holder == T`. И enroll, и unpack
-отдают именно holder; identify ждёт holder.
-
-### enrolStartEx — 0x18000d9d0 (ТОЧНО)
-```c
-void* enrolStartEx(int* pMaxTemp);   // возвращает session (или NULL при ошибке)
+Объект T = 0x8e08 байт, конструктор `0x18000fbd0` (alloc `0x18006c27c`, обнулён):
 ```
-- Проверяет глобальный флаг `PPLIB param initialized` ([rip+0xaf46f]==1), иначе `ppp_param_init` не вызван → NULL.
-- Собирает flags (сдвиги/OR из глобалов версии), malloc(0x20)=session, malloc(8)=A, malloc(8)=B.
-- `[session+8]=8; [session]=A;` вызывает конструктор `0x18000fbd0(B, *pMaxTemp, flags, 0)` → `[B]=T` (объект 0x8e08).
-- `*pMaxTemp = [T+0x20]` (клампит вход до `0x32`), `[A]=B`.
-- Цепочка: `session -> A -> B -> T`, т.е. `*(*session) == B` (holder), `*B == T`.
++0x00  тип шаблона = (flags>>3)&0x3f  (профиль 10 → 10; Chicago/12 → 24)
++0x04  = flags>>23         = SENSOR_COL = 80   (ширина картинок записей)
++0x08  = (flags>>14)&0x1ff = SENSOR_ROW = 64   (высота)
++0x0c  тип 10: 0 (без даунскейла);  +0x10 = 1;  +0x14 = +0x18 = 0x78 (макс. минуций)
++0x1c  nCurrent — число записей (перебирают матчер и identifytemplate)
++0x20  nMax = min(*pMaxTemp, 0x32)
++0x28  RECORD*[] — rec_i = [T+0x28+i*8]
++0x87e8 int[] — порядок обхода записей в матчере
++0x88b4 строка версии алгоритма
++0x8cf4 счётчик совпадений; +0x8d10 20 вспом. буферов (кэш пробы, stitch)
 ```
-0x18000da8d: mov [rdi+8], r15d      ; session+8 = 8
-0x18000da91: mov [rdi], r14         ; session -> A
-0x18000daaa: call 0x18000fbd0       ; [B]=T
-0x18000dabb: mov edx,[rcx+0x20]     ; [T+0x20] = nMaxTemp
-0x18000dacc: mov [r14], rbx         ; A -> B
-```
+flags собирает enrolStartEx (0x18000da00..da3d) из глобалов профиля (10):
+`(((((COL<<9 | ROW)<<11 | тип)<<2 | CANCEL)<<1) | COATING) | ISFLOAT`. Сеттеров конфигурации среди экспортов нет.
 
-### enrolAddImage — 0x18000d590 (ТОЧНО)
-```c
-int enrolAddImage(void* session, GxImage* img, void* arg2, /*stack*/ void* pOut);
-```
-- Требует img->bits(+0xe)==8, img->channels(+0xf)==1, frame_count(+0x18)!=0, img->data([img])!=NULL.
-- `getFeature` (0x180015150) из изображения → фичи в локале.
-- `fingerFeatureRegister` (0x180017000) регистрирует фичи в объект T. Именно тут
-  заполняются запись `T[+0x28+cur*8]` и счётчик `T[+0x1c]`.
-- Возвраты: 0 OK; 0x81 bad param; 0x82 malloc; 0x80000001 getFeature; 0x83 register fail; 0x80000005 «шаблон полон».
-```
-0x18000d709: call 0x180015150       ; getFeature
-0x18000d767: call 0x180017000       ; fingerFeatureRegister(rcx=&ret,rdx=feat,r8=T,r9=&img[0x1c])
-```
+Запись (RECORD, объект фич 0x160 байт того же формата, что фичи пробы):
 
-### enrolGetTemplate — 0x18000d950 (ТОЧНО)
-```c
-int enrolGetTemplate(void* session, void** pOutHolder);   // 0 OK, 0x81 param
-```
-```
-0x18000d971: mov rax,[rbx]      ; A         (rbx=session)
-0x18000d979: mov rax,[rax]      ; B (=[A])  holder
-0x18000d97c: mov [rdi], rax     ; *pOut = B
-```
-- Отдаёт **B — живой holder**, где `*B == T`. Объект уже полностью построен (см. F: +0x1c заполнен).
-- ВНИМАНИЕ: B/T принадлежат сессии и будут освобождены `enrolFinish`. Копию хранить
-  через `templatePack`, либо не звать `enrolFinish` пока шаблон нужен.
+| off | смысл | уверенность |
+|---|---|---|
+| +0x00/+0x04 | ширина/высота картинки фич | ТОЧНО |
+| +0x08, +0x10 | бинарные картинки (1 бит/пикс, «1» ≈ 20% пикселей) — их сравнивает score | ТОЧНО |
+| +0x28 | блочная маска 4×4 (0xc8 байт) | вероятно |
+| +0xf0 | число минуций (0 → 0x80000006) | ТОЧНО |
+| +0xf8 | минуции по 0x38 байт | ТОЧНО |
+| +0x100 / +0x104 | флаг / индекс при замене (study) | вероятно |
+| +0x10c / +0x110 | quality (= gimg+0x28) / coverage (= gimg+0x29) | ТОЧНО |
+| +0x114 | состояние (5 → матчер сбрасывает в 0) | ТОЧНО |
+| +0x124 | счётчик совпадений записи | ТОЧНО |
+| +0x130 | упакованная маска | вероятно |
+| +0x148 | код 0..3 из «водяного знака» в LSB первой строки картинки (0x180038a50) | код ТОЧНО, смысл — гипотеза |
+| +0x14c | param[0] (байт; тип 10 при coverage<65 → ≤1) | ТОЧНО |
+| +0x150 | 1, если param[1] ≠ 0 | ТОЧНО |
 
-### enrolFinish — 0x18000d8e0 (ТОЧНО)
-```c
-int enrolFinish(void* session);   // 0 OK, 0x81 если session==NULL
-```
-- `0x18000f810(B)` (уничтожает T), затем `free(B)`, `free(A)`, `[session]=0`, `free(session)`.
-- Т.е. **enrolFinish разрушает и шаблон тоже.** Забрать/запаковать шаблон до вызова.
-```
-0x18000d91f: call 0x18000f810      ; freeTemplate(B)
-0x18000d927/d92f/d93e: call 0x18002ab90  ; free B, A, session
-```
+Число минуций типов 9/10: `(coverage·T[+0x18] + 50)/100` (0x180014a2e..a56).
 
-### identifytemplate — 0x18000e1b0 (ТОЧНО)
-```c
-int identifytemplate(void** ref, void** probe, void* unused/*NULL*/, int* pIdx);
-// 0 OK; 0x81 param; 0x82 malloc
-```
-- `rbp = *ref` (объект-A), проверка `rcx,rdx,r9 != NULL` (третий арг r8 может быть NULL).
-- malloc(0x8e08)=scratch; **memcpy(scratch, *probe, 0x8e08)** — МЕЛКАЯ копия объекта-B:
-  указатели записей в `scratch+0x28` продолжают указывать на записи ОРИГИНАЛА `*probe`.
-- Внешний цикл `i in [0, scratch[+0x1c])`: `rec = scratch[+0x28 + i*8]`; вызывает matcher
-  `0x18001d1f0(&score, rec, rbp, 0, ..., &scratch_local)`.
-- Если `score(+0x40) > 0` → `*pIdx = i` и выход; иначе `*pIdx = -1`.
-```
-0x18000e212: mov ecx, 0x8e08
-0x18000e236: mov rdx,[rbx]         ; *probe
-0x18000e24a: call 0x18002abc0      ; memcpy(scratch, *probe, 0x8e08)
-0x18000e252: cmp [rsi+0x1c], ebx   ; i < scratch.nCurrent
-0x18000e260: mov rdx,[rdi]         ; rec = scratch[+0x28 + i*8]
-0x18000e27f: mov r8, rbp           ; = *ref
-0x18000e287: call 0x18001d1f0      ; matcher(&score, rec, *ref)
-0x18000e28c: cmp [rsp+0x40], r15d  ; score > 0 ?
-```
-Роли: **arg0(`ref`)** — целый шаблон, чьи записи перебирает matcher внутри (см. ниже
-`rbx+0x1c`); **arg1(`probe`)** — шаблон, чьи записи по одной подаются matcher-у;
-`pIdx` — индекс записи в `probe`, которая совпала (или -1).
+**Геометрия (ТОЧНО).** Объект-картинка `0x18002ad60(w, h, bpp)`: `[+0]=w` (длина строки),
+`[+4]=h`, `[+8]=w·bpp`, `[+0x18]` данные (обход 0x180038dc0: цикл по `[+4]` строкам, шаг `[+0]`).
+enrolAddImage/identifyImage строят дескриптор `{gimg+0x08, gimg+0x0a, …}` (0x18000d65a..d6ad,
+0x18000df31..df49), getFeature делает `0x18002ad60(desc[0], desc[4], 1)` (0x180014ac0) ⇒
+**gimg+0x08 = ширина, +0x0a = высота**. Картинки записей создаются `0x18002ad60(T+4, T+8, 8)`
+(0x18000fe02) = 80×64; fingerFeatureRegister (0x1800164c0) копирует в запись только данные.
+Поэтому gimg обязан быть `+0x08=80, +0x0a=64`, данные — 64 строки по 80 (транспонированный кадр).
 
-### matcher — 0x18001d1f0 (ТОЧНО; в наших логах RVA 0x1d1f0, краш на 0x1d249)
-```c
-int matcher(void* pScoreOut, RECORD* recA, TEMPLATE* tplB, int flag,
-            /*stack*/ int, void* ctxA, void* ctxB, void* extra);
-```
-Маппинг регистров: rcx→r15(out), rdx→r14(recA), r8→rbx(tplB), r9d→ebp(flag).
-```
-0x18001d244: call 0x18001a170       ; сравнение фич recA vs (по [tplB] типу)
-0x18001d249: mov ecx,[r14+0x148]    ; <<< КРАШ: читает recA+0x148 (r14=recA=arg1)
-0x18001d25c: movsxd rcx,[rbx]        ; тип шаблона tplB (arg2)
-0x18001d288..2bc: цикл i<[rbx+0x1c]: rec=[rbx+rcx*8+0x28]; if [rec+0x114]==5 →0
-0x18001d315: call 0x18001bb50        ; тип 9/10
-0x18001d343: call 0x18001b010        ; прочие типы
-```
-Т.е. matcher-у нужно: **arg1 = одиночная ЗАПИСЬ** (с полем `+0x148`), **arg2 = целый
-ОБЪЕКТ-шаблон** (с `+0x1c` счётчик и `+0x28` массив записей). Краш `[r14+0x148]`
-происходит из-за того, что `recA` (= запись из `*probe`-галереи) указывает на
-освобождённую память (её убил `0x18000f810`).
-
-### templateStudy — 0x18000e480 (ТОЧНО — это НЕ то, что нужно для галереи)
-```c
-int templateStudy(int* pOut);   // работает над ГЛОБАЛЬНЫМ шаблоном [rip+0xa9080]
-```
-- Если глобальный контекст задан → `0x18001f700(...)` (алг. слияния/обновления),
-  печатает `alg_ret, nUpdate, nReplaceIdx`, пишет `*pOut = nUpdate`, чистит глобал через `0x18000fa90`.
-- Это адаптивное дообучение (update-after-verify), НЕ финализация галерейного шаблона.
-
-### templateGetPackedSize — 0x18000e380 / templatePack — 0x18000e3d0 / templateUnPack — 0x18000e590 (вероятно по деталям, ТОЧНО по смыслу)
-```c
-int  templateGetPackedSize(void** holder);                 // ->0x180023c50(T); size или 0
-int  templatePack(void** holder, void* dst);               // ->EncodeFingerTemplate 0x180022930; 0 OK,0x80 enc,0x81 param
-int  templateUnPack(void* ctx, int length, void* blob, void** pOutHolder); // ->DecodeFingerTemplate 0x1800221a0; 0 OK
-```
-- Pack: `T=[holder]`; `sz=0x180023c50(T)`; `0x180022930(&ctx,dst,&sz,T)`.
-- UnPack: malloc(8)=B; `0x1800221a0(&in,&len,&outObj,blob)`; `[B]=outObj; *pOutHolder=B`.
-  → отдаёт **живой holder** того же формата, что enrolGetTemplate. Это правильный способ
-  восстановить сохранённый галерейный шаблон.
-
-### templateDelete — 0x18000e2f0 (ТОЧНО)
-```c
-int templateDelete(void** holder);   // 0/void
-```
-- `local=[holder]; 0x18000f810(&local); free(holder)`. Т.е. правильное освобождение
-  standalone-шаблона (unpack-нутого). Внутри корректно зовёт деструктор `0x18000f810`
-  с ЛОКАЛЬНЫМ holder — не порти оригинал.
-
-### getTemplateInfo (0x18000bcd0) и InitIdentifyImage (0x18000ba40) — ЗАГЛУШКИ (ТОЧНО)
-Обе — тонкие враперы, которые просто `mov eax, 0x83; ret` (GF_NOSUPPORT). В этой сборке
-DLL **не реализованы**. Значит «InitIdentifyImage» как отдельного пути НЕТ.
-```
-0x18000ba54: mov eax,0x83 ; ret     ; InitIdentifyImage
-0x18000bce4: mov eax,0x83 ; ret     ; getTemplateInfo
-```
-
-### identifyImage (wrapper 0x18000ba60 → внутр. 0x18000de30) — РЕАЛИЗОВАН (ТОЧНО)
-```c
-int identifyImage(GxImage* probeImg, void* param, void** candidates, int nCand,
-                  /*stack*/ int* pScoreOut, int* pIdxOut, void* featScratch,
-                  int flag, void* g, byte b);
-```
-- Проверяет `candidates[0]` и `candidates[0][0] (pFingerTemplate)` != NULL.
-- `getFeature`(0x180015150) из probe-изображения → глобальный фича-контекст.
-- Цикл `i in [0,nCand)`: `T_i = candidates[i][0]`; вызывает **тот же matcher `0x18001d1f0`**:
-  `matcher(&score, [rip+0xa9506]=probeFeatCtx, T_i, flag,...)`.
-  Тут arg1=контекст фич пробы (валидная запись с `+0x148`), arg2=галерейный ОБЪЕКТ T_i.
-- Печатает `maxTempNum=[T+0x20], curTempNum=[T+0x1c]`. Пишет `*pIdxOut=i`, `*pScoreOut=score`; при отсутствии — idx=-1, score=-1.
-```
-0x18000e024: mov rdi,[rax]          ; T_i = candidates[i]->pFingerTemplate
-0x18000e059: call 0x18001d1f0       ; matcher(&score, probeFeatCtx, T_i)
-0x18000e066: mov eax,[rdi+0x1c]     ; curTempNum
-0x18000e069: mov r9d,[rdi+0x20]     ; maxTempNum
-```
-
----
-
-## 2. Раскладка объекта шаблона T (size = 0x8e08 = 36360 байт)
-
-Аллокация: `0x18000fbd0 → 0x18006c27c(0x8e08)` (зануляется). ТОЧНО по размеру.
-
-```
- off      тип         значение / роль                         доказательство
- -----    ---------   -------------------------------------   -----------------------------
- +0x00    dword       ТИП/версия шаблона (switch 9,10,...)     matcher [rbx]; study [rbx]; 0x18001a170 [rcx]
- +0x04    dword       sensor/params (r12d при register)        register [r8+4]
- +0x08    dword       sensor/params (r13d)                     register [r8+8]
- +0x0c    dword       копия поля                               register [r8+0xc]
- +0x1c    dword       nCurrent — ЧИСЛО ЗАПИСЕЙ (текущее)       register cmp [r8+0x1c]<max; ИМЕННО ЭТО перебирают
-                                                               matcher (rbx+0x1c) и identifytemplate (rsi+0x1c)
- +0x20    dword       nMax — ёмкость (nMaxTemp)                enrolStart [T+0x20]; register max; деструктор итерирует
- +0x24    dword       поле                                     register [r8+0x24]
- +0x28    RECORD*[]   массив указателей на записи              rec_i = [T + 0x28 + i*8]  (register/identify/matcher/destructor)
- +0x640   dword       флаг для алг. study                      0x18001f700 [r8+0x640]
- +0x87d0  ptr         accessor                                 0x18000fbb0 lea [rcx+0x87d0]
- +0x88b4  char*       строка версии алгоритма                  0x18000fbc0; enrolStart "Algorithm version %s"
- +0x88f4  ptr         accessor                                 0x18000fba0 lea [rcx+0x88f4]
- +0x8d10  ptr[20]     вспом. буферы (stitch/cache)             деструктор: 0x14 шт через 0x18000fa90
- ...
- +0x8e08              конец объекта
-```
-
-### Раскладка ЗАПИСИ (RECORD, элемент массива +0x28; размер > 0x158)
-```
- off      роль                                    доказательство
- -----    ------------------------------------    ------------------------------------
- +0x08    под-буфер (фичи)                        деструктор free [rec+8]  (0x18002ba50)
- +0x10    под-буфер                               free [rec+0x10]
- +0x18    под-буфер                               free [rec+0x18]
- +0x20    под-буфер                               free [rec+0x20]
- +0xf8    под-буфер                               free [rec+0xf8]  (0x180068638)
- +0x100   dword флаг                              study 0x18000fa6a пишет 0
- +0x104   dword индекс                            0x18000f9de читает при replace
- +0x114   dword состояние (==5 → сброс в 0)       matcher 0x18001d2a7/0x18001d2b0
- +0x130   под-буфер                               free [rec+0x130]
- +0x148   dword/ptr данные фич                    matcher 0x18001d249 [r14+0x148]  <<< САЙТ КРАША
- +0x158   под-буфер                               free [rec+0x158]
-```
-
----
-
-## 3. enroll-формат vs identify-формат — СОВПАДАЮТ (ТОЧНО)
-
-- `enrolGetTemplate` отдаёт holder B, где `*B == T` — полноценный объект 0x8e08 с уже
-  заполненными `+0x1c`/`+0x28` (их пишет `fingerFeatureRegister` внутри `enrolAddImage`).
-- `identifytemplate` ждёт ровно holder (`*arg == T`) и читает `T[+0x1c]`, `T[+0x28]`,
-  запись `+0x148` — то же самое, что производит enroll.
-- `templatePack`→`templateUnPack` даёт holder идентичного формата.
-- **Никакая конвертация не нужна.** Проблема НЕ в формате, а в том, что галерейный
-  шаблон разрушается `0x18000f810` до сравнения.
-
----
-
-## 4. Правильный путь сравнения штатного движка
-
-Два реализованных варианта (оба через один matcher `0x18001d1f0`):
-
-1. **identifyImage(проба-ИЗОБРАЖЕНИЕ, candidates[])** — основной путь верификации:
-   getFeature(проба) → matcher(фичи_пробы, T_кандидата) по каждому кандидату.
-   `candidates` — массив holder'ов (`candidates[i][0] == T_i`). Возвращает idx кандидата
-   и score. (`InitIdentifyImage`/`getTemplateInfo` — заглушки, не нужны.)
-
-2. **identifytemplate(ref_holder, probe_holder, NULL, &idx)** — шаблон×шаблон:
-   перебирает записи `probe` (arg1), каждую матчит против всего `ref` (arg0);
-   `idx` = индекс записи в `probe`, что совпала, или -1.
-
-Первый аргумент identifytemplate — «эталон, чьи записи перебираются matcher-ом внутри»
-(arg0/`ref`); второй — «шаблон, чьи записи по одной пробуются» (arg1/`probe`).
-Для симметричного матча важно лишь, чтобы ОБА были валидными живыми шаблонами.
-
----
-
-## 5. Что такое `base+0xf810` (0x18000f810) — ДЕСТРУКТОР, не study (ТОЧНО)
+## Регистрация
 
 ```c
-int freeTemplate(void** holder);  // 0 OK; 0x80000002 если holder/ *holder == NULL
+void *enrolStart(void);                 /* 0x18000d9b0: *p = 0x32; return enrolStartEx(&p) */
+void *enrolStartEx(int *pMaxTemp);      /* 0x18000d9d0 → session или NULL */
 ```
-- `T=[holder]`. Цикл `i in [0, T[+0x20])`: `rec=[T+0x28+i*8]`; освобождает под-буферы
-  `+8,+0x10,+0x18,+0x20,+0xf8,+0x130,+0x158`, затем `free(rec)`, `[slot]=0`.
-- Цикл 20× по `T+0x8d10` через `0x18000fa90` (освобождение вспом. буферов).
-- `free(T)`, `[holder]=0`.
-- Зовётся из `enrolFinish` и `templateDelete` — там это уместно. **В нашем C он ошибочно
-  применён к галерейному шаблону как «study» → шаблон уничтожен → identifytemplate
-  разыменовывает висячий `rec+0x148` → SIGSEGV на 0x1d249.**
+enrolStartEx: NULL если PARAM_INIT≠1. session(0x20) → A(8) → B(8, holder) → T:
+`[session]=A, [session+8]=8, [A]=B`, `0x18000fbd0(B, *pMaxTemp, flags, 0)`, `*pMaxTemp = T+0x20`.
 
-Доказательства: `templateDelete` (0x18000e2f0) явно вызывает `0x18000f810` затем
-`free(holder)`; `enrolFinish` (0x18000d8e0) вызывает `0x18000f810(B)` перед освобождением.
-
----
-
-## Итог для C
-
-**Причина падения:** вызов `0x18000f810` (freeTemplate) на галерейном шаблоне
-уничтожает его записи; `identifytemplate` затем читает висячий `rec+0x148`.
-
-**Как правильно построить галерейный шаблон:**
+```c
+int enrolAddImage(void *session, GImg *img, uint8_t *cbuf, uint16_t *raw16,
+                  uint8_t liveness, int out[2] /*{coverage, quality}*/);   /* 0x18000d590 */
 ```
-enrolStartEx(&maxt=16)              // maxt клампится до 0x32
-for each PREPROCESSED кадр:
-    enrolAddImage(session, img, ...)   // тут же выполняется finalize (fingerFeatureRegister)
-enrolGetTemplate(session, &tpl)     // tpl — ЖИВОЙ holder, готов к сравнению; НЕ трогать 0xf810
-// хранить/переносить:
-sz = templateGetPackedSize(tpl); buf = malloc(sz); templatePack(tpl, buf);
-// освобождать сессию только ПОСЛЕ pack (enrolFinish уничтожит tpl):
-enrolFinish(session);
-// восстановить перед сравнением:
-templateUnPack(ctx, len, buf, &galleryHolder);
-```
+- Требует `img+0x0e == 8`, `+0x0f == 1`, `+0x18 != 0`, data ≠ NULL. arg4/arg5 не читаются.
+- `getFeature(&feat, &desc, quality, coverage, 0 /*enroll*/, T, 0, cbuf, 0)` (0x180015150),
+  затем `fingerFeatureRegister` (0x180017000, `r9 = &img[+0x1c]` sensor_type; при ошибке лог
+  `"fingerFeatureRegister retures 0x%x image->sensor_type:%d"`).
+- Возвраты: 0; 0x81 параметры; 0x82 malloc; 0x80000001 getFeature; 0x83 register; 0x80000005 шаблон полон.
+- session после успеха: `+0x10 = 100 − (r>>24)` (overlay), `+0x14 = 100 − (r&0xff)` (preoverlay),
+  `+0xa` счётчик, `+0xc` прогресс `min(100, cnt·100/max)`.
+- Шаблон у Milan всегда сворачивается в **8 записей-склеек** (размер блоба фиксирован) — ТОЧНО (эксперимент).
 
-**Как корректно сравнивать (без падения):**
+```c
+int enrolGetTemplate(void *session, void **pHolder);   /* 0x18000d950: *pHolder = B (живой) */
+int enrolFinish(void *session);                        /* 0x18000d8e0 */
 ```
-// оба аргумента — валидные живые holder'ы (*holder == T); третий = NULL
-int idx = -1;
-int rc = identifytemplate(&refHolder, &probeHolder, NULL, &idx);
-// idx>=0 → совпадение (индекс записи probe); idx==-1 → нет
-// НЕ вызывать 0x18000f810 ни на одном из шаблонов до/во время сравнения.
-// освобождать standalone-шаблоны через templateDelete(&holder), а сессию — enrolFinish.
-```
+enrolFinish: `0x18000f810(B)` → free B, A, session. **Уничтожает и шаблон** — паковать до него.
 
-Альтернатива, ближе к штатному движку: держать пробу как ИЗОБРАЖЕНИЕ и звать
-`identifyImage(probeImg, param, candidates[], n, &score, &idx, featScratch, flag, ...)`,
-где `candidates[i]` — holder'ы enroll-шаблонов. Тот же matcher, меньше риска перепутать
-роли записей. (`InitIdentifyImage`/`getTemplateInfo` в этой DLL — заглушки, не использовать.)
+## Хранение (ТОЧНО)
+
+```c
+int templateGetPackedSize(void *holder);             /* 0x18000e380 → 0x180023c50(T) */
+int templatePack(void *holder, void *dst);           /* 0x18000e3d0 → EncodeFingerTemplate 0x180022930 */
+int templateUnPack(const void *blob, int len, void *must_be_NULL, void **pHolder);  /* 0x18000e590 */
+int templateDelete(void *holder);                    /* 0x18000e2f0 */
+```
+templateUnPack: `rcx=blob, edx=len, r8→` 4-й арг `DecodeFingerTemplate 0x1800221a0`, `r9=pHolder`;
+malloc(8)=B, `[B]=T`, `*pHolder=B`; 0x81 при blob/pHolder/len = 0. **3-й арг — NULL** (так делает EA);
+указатель на нули даёт пустой шаблон (maxTempNum 0) — ТОЧНО (эксперимент).
+templateDelete: `local=[holder]; 0x18000f810(&local); free(holder)`.
+
+**0x18000f810 — деструктор шаблона** `int freeTemplate(void **h)` (0x80000002 при NULL): по
+`i < T+0x20` освобождает у записей `+8,+0x10,+0x18,+0x20,+0xf8,+0x130,+0x158` и саму запись,
+20 буферов `T+0x8d10` (0x18000fa90), `free(T)`, `*h=0`. Зовут только enrolFinish и templateDelete.
+Вызов на живой галерее → висячие записи → SIGSEGV в матчере (`0x18001d249 mov ecx,[r14+0x148]`).
+
+`templateStudy(int *pUpdate)` (0x18000e480) — адаптивное дообучение над глобалами:
+identifyImage при совпадении кладёт T в `[0x1800b7558]`, фичи пробы — `[0x1800b7550]`;
+study зовёт `0x18001f700(T, feat, &0x1800b7560, &out, 1)`, `*pUpdate = nUpdate` — модифицирует тот же T.
+`identifyUpdate` (0x18000e1a0) — заглушка `xor eax,eax; ret`. `InitIdentifyImage`, `getTemplateInfo` — заглушки `mov eax,0x83; ret`.
+
+## identifyImage — путь проверки (ТОЧНО)
+
+```c
+int identifyImage(GImg *img,          /* препроцессированный u8 */
+                  uint8_t *param,     /* cbuf ЭТОГО кадра из preprocessor → getFeature [0x38] */
+                  void **cand,        /* массив holder'ов; EA: &holder */
+                  int nCand,          /* EA: 1 */
+                  int *pIdx,          /* arg5: индекс совпавшего кандидата или −1 */
+                  int *pScore,        /* arg6: ratio матчера */
+                  int cq[2],          /* arg7: out {[0]=coverage (img+0x29), [1]=quality (img+0x28)} */
+                  int flag,           /* arg8: → матчер r9d; EA 0 */
+                  uint8_t studyflag,  /* arg9: → матчер (byte); EA 1 */
+                  void *raw16, uint8_t liveness);   /* arg10/11 не читаются */
+```
+Обёртка 0x18000ba60 → 0x18000de30 (11 аргументов 1:1). Проверки: `img+0x0e==8`, `+0x0f==1`,
+`+0x18!=0`, `cand[0] && *cand[0]`. `getFeature(&featctx 0x1800b7550, &desc, quality, coverage, 1 /*identify*/,
+T0, 0, param, 0)`; цикл по кандидатам: `matcher(&ratio, featctx, T_i, flag, studyflag, &ctx 0x1800b7560, 0, 0)`,
+`ratio > 0` → совпадение, `*pIdx = i`. Лог `'i = %d , ratio = %d, maxTempNum:%d, curTempNum:%d'`.
+**Мутирует шаблон кандидата** (T+0x8cf4, rec+0x124, rec+0x114, кэш T+0x8d10 при условиях).
+
+Решение: `rc == 0 && idx >= 0 && score > 0`.
+- Milan: score — **код исхода**: 101 совпадение (byte-режим 0), 104 (доп. проверка 0x180019390),
+  111 (сильное: ctx+0x688==1); −100 нет совпадения; −101 coverage<50; −102 низкое качество;
+  −104; −701 (см. хвост ниже).
+- Chicago: score > 0 — величина сходства (наблюдали ≈38..77), ≤ 0 — коды.
+
+## identifytemplate — CheckForDuplicate (ТОЧНО)
+
+```c
+int identifytemplate(void *ref_holder, void *probe_holder, void *NULL_, int *pIdx);  /* 0x18000e1b0 */
+```
+`rbp = *ref` (T), malloc(0x8e08) + memcpy(`*probe`) — мелкая копия; по записям probe
+`matcher(&score, rec, T_ref, 0, …)`; `score > 0` (0x18000e28c) → `*pIdx = i`, иначе −1.
+В EngineAdapter — только CheckForDuplicate при регистрации (30), **не путь проверки**.
+getFeature в enroll-режиме (5-й арг 0) и identify-режиме (1) даёт разные фичи.
+
+## Матчер 0x18001d1f0
+
+```c
+int matcher(int *pRatio, FEAT *probe, T *tpl, int flag, /*stk*/ uint8_t byte, void *ctx, …);
+```
+Диспетчер по `tpl+0`: 9/10 → **0x18001b010**; маска 0xc0000000000000cd (0,2,3,6,7,62,63) →
+0x18001bb50; иначе 0x80000003. Параметры `params` (локал) заполняет `0x18001a170(T, &p, flag, byte)`.
+Матчер не читает алгоритмических глобалов — только константы .rdata и ctx 0x1800b7560,
+который сам обнуляет (0x180017920) в начале каждого вызова. (ТОЧНО)
+
+### params (ТОЧНО)
+| off | значение |
+|---|---|
+| +0x00 | сдвиг порога score от flag (0x180017a80) |
+| +0x04 | вычитается из cnt (0/2/3) |
+| +0x08, +0x0c | 5, 0xda |
+| +0x10, +0x14 | от byte (0x1800206c0): 0 → (0,0); 2 → (1,0); 1/прочее → (1,1) |
+| +0x18..+0x2c | допуски сопоставления минуций: {0x16,0x2d,0x28,0x26,0x64,0x10} (тип 10) |
+| +0x30 | ROW·COL·256/9504 (=137) |
+| +0x34 | всегда 1 → обходить все записи |
+| +0x44 | = probe+0x148 |
+
+flag: `lo = flag&0xf`, `hi = (flag>>8)&0xf`, допустимо 0..2 и не оба ≠ 0 (иначе 0x80000003).
+
+| flag | params[0] | порог score | params[4] |
+|---|---|---|---|
+| 0 | 0 | > 207 | 0 |
+| lo=1 / lo=2 (тип 10, строже) | +2 / +4 | > 209 / > 211 | 2 / 3 |
+| hi=1 / hi=2 (0x100/0x200, мягче) | −1 / −2 | > 206 / > 205 | 0 |
+
+byte: params+0x10=0 → остановка на первом совпадении, ratio 101; =1 → обход всех записей и
+хвостовая проверка 0x180019390 (104 / −104); +0x10 также меняет ветку в 0x180018490. flag пишется в ctx+0x68c.
+
+### Цикл по записям 0x18001b1d0..0x18001b886 (ТОЧНО, детали st — вероятно)
+Порядок — по `T+0x87e8`. Для записи rec:
+1. `rec+0xf0 == 0` → пропуск; `ctx+0x688==1 && ctx+0x644==1 && rec+0x100==1` → пропуск.
+2. `0x18001ee40(T, probe, 0, params, idx, &xf, &res, …)` → `cnt` пар минуций; **cnt ≤ 4 → провал записи**.
+3. `0x1800192d0(&xf, probe+0x148, type) != 0` → пропуск (допустимость преобразования; при
+   probe+0x148 ∈ {1,2,3} отвергает почти-единичные xf).
+4. `score = 0x180039920(probe, rec, &xf, …)`, `s2 = [rbp+0x34]`.
+5. Предусловие: `(score ≥ 215 && s2 ≥ 210 && probe+0x14c ≤ 0) || probe quality ≥ 15`; иначе при
+   почти-единичном xf (|a−256|≤25, |b|,|c|≤20, |tx|,|ty|≤1792, 8.8 fixed) запись пропускается.
+6. **Порог: `score > params[0] + 207`** (0x18001b448..b454).
+7. Уточнение `0x1800356c0`, `0x180038600`; решение `0x180018490(type, params+0x10, &st, …, &o6c, &o54)`,
+   для типов 9/10 при o54==1 ещё `0x1800188e0`. o54==1 → `*ratio = 101`, T+0x8cf4++, rec+0x124++,
+   ctx+0x684=1 (o6c==1 → ctx+0x688=1).
+   0x180018490 (тип 10, byte=0): `n = max(cnt − params[4], 5)`; n > 20 → сильно; иначе сильно, если
+   `score' > T0[n−5]` или `s2' > T1[n−5]` или (`score' > T2[n−5]` и `s2' > T3[n−5]`); далее условия
+   по перекрытию (st+0x1c ≥ 500 …). Таблицы типа 10 (n = 5..22):
+   ```
+   T0 0x180094f00: 231 231 231 231 231 230 229 227 224 222 219 222 209 209 209 209 209 209
+   T1 0x180094f50: 231 229 228 228 223 221 220 215 208 205 203 203 195 195 195 195 195 195
+   T2 0x180094fa0: 229 227 226 220 218 218 218 218 210 209 209 209 209 209 209 209 209 209
+   T3 0x180094ff0: 231 229 228 228 223 221 220 214 208 205 203 203 192 192 192 192 192 192
+   T4 0x180095040: 237 235 235 233 233 229 229 229 223 222 220 220 220 220 220 220 220 220
+   T5 0x180095090: 235 232 228 228 226 222 222 220 218 214 214 214 214 214 214 214 214 214
+   ```
+   Реальная планка ~210–231 в зависимости от числа пар; 207 — предварительный отсев.
+8. Провал записи: если угол xf вне [15..345] и перекрытие > 75% и т.п. → счётчик «почти совпало» ([rsp+0x58]).
+
+### Хвост 0x18001b8a5..0x18001ba1c — коды ratio (ТОЧНО)
+- ratio > 0 и «почти совпало» > 3 → **−701** (ctx+0x684=0).
+- ratio > 0 и params+0x10 = 1 (при ≤1 совпадении и др. условиях) → 0x180019390: **104** или **−104**; ctx+0x688==1 → **111**.
+- ratio ≤ 0: coverage (+0x110) < 50 → **−101**; хотя бы одна запись дошла до score и quality (+0x10c) < 25 → **−102**; иначе **−100**.
+- Побочно: quality > 40 и T+0x8e00==0 → `0x180020960` строит кэш пробы в T+0x8d10/0x8db0;
+  ratio < 1, T+0x8e00==1, probe+0x14c==0 → «второй шанс» 0x1800198f0 (вероятно по кэшу).
+
+### score = 0x180039920 (ТОЧНО по коду)
+Сравнение бинарных картинок пробы и записи после аффинного совмещения xf (распаковка 0x180035aa0
+использует заголовки w,h каждой картинки; варп 0x18003a070; таблица 2×2 c00/c01/c10/c11 в
+пересечении масок 0x180035420). `0x1800351f0`: total==0 → 128; `total > area/2` →
+`256·c00/total + 38`, иначе `256·c00/(total+1) + 19·total/(area/2) + 19`; при `256·c11/total ≤ 16`
+→ 128. `s2 = 256·c00/(c00+c01+c10+1)`. Вторая пара картинок (+0x10) берётся, если лучше и её s2 > 0xc3.
+Ориентиры: идентичные картинки ≈ 243, независимые ≈ 202 (или 128).
+
+### ctx 0x1800b7560
+`[idx*32+0x1c]` = cnt или −2 по записям; +0x644 флаг rec+0x100; +0x648..0x650 лучшая запись;
+**+0x684** было совпадение; **+0x688** сильное совпадение (→ 111); **+0x68c** = flag.

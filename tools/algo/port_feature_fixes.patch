@@ -1,0 +1,1035 @@
+--- a/goodix-chicago-feature.c	2026-09-28 12:29:44.339112969 +0300
++++ b/goodix-chicago-feature.c	2026-09-28 12:45:51.291762474 +0300
+@@ -4,8 +4,10 @@
+ /* Exact recovered front half of Chicago mode-24 feature extraction. */
+ 
+ #include <stdint.h>
++#include <string.h>
+ 
+ #include "goodix-chicago-feature.h"
++#include "goodix-chicago-feature-dll.h"
+ 
+ void
+ goodix_chicago_feature_build_live_auxiliary (
+@@ -2245,3 +2247,835 @@
+         }
+     }
+ }
++
++/* ------------------------------------------------------------------------
++ * AlgoChicago.dll getFeature (0x180013490 in Milan_v_3.02.00.15; the port's
++ * own comments use another build, +0x9b0) for template type 24, with the
++ * steps the recovered pipeline above lacks.  docs/stage3-features.md.
++ * ------------------------------------------------------------------------ */
++
++#define CHICAGO_W GOODIX_CHICAGO_FEATURE_WIDTH
++#define CHICAGO_H GOODIX_CHICAGO_FEATURE_HEIGHT
++#define CHICAGO_N GOODIX_CHICAGO_FEATURE_PIXELS
++
++void
++goodix_chicago_feature_state_init (GoodixChicagoFeatureState *state)
++{
++  g_return_if_fail (state != NULL);
++  memset (state, 0, sizeof (*state));
++}
++
++/* 0x180053440: the preprocessor marks its output in the least significant
++ * bits of the first row (0x180054270).  Returns TRUE when the per-pixel region
++ * plane (LSB of every pixel below row 0) is present; *packed receives the code
++ * even when it is not. */
++gboolean
++goodix_chicago_feature_decode_mark (const guint8 image[GOODIX_CHICAGO_FEATURE_PIXELS],
++                                    guint32     *packed,
++                                    guint8       region[GOODIX_CHICAGO_FEATURE_PIXELS])
++{
++  const guint signature = CHICAGO_W - 8;
++  guint value;
++
++  for (guint x = 0; x < signature; x += 2)
++    if (image[x] & 1)
++      return FALSE;
++  for (guint x = 1; x < signature; x += 2)
++    if (!(image[x] & 1))
++      return FALSE;
++
++  value = (image[CHICAGO_W - 8] & 1) + 2 * (image[CHICAGO_W - 7] & 1);
++  *packed = value == 1 ? 1 : value == 2 ? 3 : value == 3 ? 2 : 0;
++  *packed += ((image[CHICAGO_W - 5] & 1) + 2 * (image[CHICAGO_W - 4] & 1) +
++              4 * (image[CHICAGO_W - 3] & 1)) << 8;
++  if (!(image[CHICAGO_W - 6] & 1))
++    return FALSE;
++  memset (region, 1, CHICAGO_W);
++  for (guint pixel = CHICAGO_W; pixel < CHICAGO_N; pixel++)
++    region[pixel] = image[pixel] & 1;
++  return TRUE;
++}
++
++/* Jump tables of 0x180052210 / 0x1800536d0. */
++static gint
++resolution_class (gint value)
++{
++  static const gint8 map[9] = { 2, 2, 3, 0, 1, 2, 4, 5, 5 };
++
++  return value >= 1 && value <= 9 ? map[value - 1] : 0;
++}
++
++/* 0x180055720: 4-connected flood-fill labelling with a 0x992-entry FIFO,
++ * margins 0, at most 70 + 1 labels; sizes[label]++ per pixel. */
++static gint
++label_components (const guint8 *image,
++                  gint32       *labels,
++                  gint32        sizes[100],
++                  gint          max_labels)
++{
++  static const gint dx[4] = { -1, 0, 1, 0 };
++  static const gint dy[4] = { 0, -1, 0, 1 };
++  enum { QUEUE = 0x992 };
++  gint32 (*queue)[2] = g_malloc_n (QUEUE, sizeof (*queue));
++  gint count = 0, head = 0, tail = 0;
++  gint label = 1;
++  gboolean stop = FALSE;
++
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    labels[pixel] = -1;
++  for (gint y = 0; y < (gint) CHICAGO_H && !stop; y++)
++    for (gint x = 0; x < (gint) CHICAGO_W && !stop; x++)
++      {
++        const gint pixel = y * CHICAGO_W + x;
++        gint iterations = 0;
++
++        if (labels[pixel] != -1)
++          continue;
++        if (image[pixel] == 0)
++          {
++            labels[pixel] = 0;
++            continue;
++          }
++        if (count < QUEUE)
++          {
++            queue[tail][0] = x;
++            queue[tail][1] = y;
++            tail = tail + 1 == QUEUE ? 0 : tail + 1;
++            count++;
++          }
++        labels[pixel] = label;
++        sizes[label]++;
++        while (count > 0 && iterations <= 0x4c90)
++          {
++            gint px, py;
++
++            iterations++;
++            px = queue[head][0];
++            py = queue[head][1];
++            count--;
++            head = head + 1 == QUEUE ? 0 : head + 1;
++            for (guint k = 0; k < 4; k++)
++              {
++                const gint nx = px + dx[k], ny = py + dy[k];
++                gint neighbor;
++
++                if (ny < 0 || ny >= (gint) CHICAGO_H || nx < 0 || nx >= (gint) CHICAGO_W)
++                  continue;
++                neighbor = ny * CHICAGO_W + nx;
++                if (labels[neighbor] != -1)
++                  continue;
++                if (image[neighbor] == 0)
++                  {
++                    labels[neighbor] = 0;
++                    continue;
++                  }
++                labels[neighbor] = label;
++                sizes[label]++;
++                if (count < QUEUE)
++                  {
++                    queue[tail][0] = nx;
++                    queue[tail][1] = ny;
++                    tail = tail + 1 == QUEUE ? 0 : tail + 1;
++                    count++;
++                  }
++              }
++          }
++        label++;
++        if (label > max_labels + 1)
++          stop = TRUE;
++      }
++  g_free (queue);
++  return label - 1;
++}
++
++/* 0x180055b20: the k largest labels with more than `threshold` pixels. */
++static void
++select_components (gint32 sizes[100],
++                   gint   label_count,
++                   gint32 selected[],
++                   gint   k,
++                   gint   threshold)
++{
++  gint32 saved[10] = { 0, };
++
++  if (k > 10 || k <= 0)
++    return;
++  for (gint j = 0; j < k; j++)
++    {
++      gint best = threshold;
++
++      for (gint label = 0; label <= label_count; label++)
++        if (sizes[label] > best)
++          {
++            best = sizes[label];
++            selected[j] = label;
++          }
++      if (selected[j] > 0)
++        {
++          saved[j] = sizes[selected[j]];
++          sizes[selected[j]] = 0;
++        }
++    }
++  for (gint j = 0; j < k; j++)
++    if (selected[j] > 0)
++      sizes[selected[j]] = saved[j];
++}
++
++/* 0x180015980: keep the 3 largest components (> 350 px) of `image` in place;
++ * with three frames of history, `out` receives `value` where the component
++ * survived in all of them (again the 3 largest > 350 px). */
++static void
++select_stable_components (GoodixChicagoFeatureState *state,
++                          guint8                    *image,
++                          guint8                     value,
++                          guint8                    *out)
++{
++  g_autofree gint32 *labels = g_new (gint32, CHICAGO_N);
++  g_autofree guint8 *votes = g_new0 (guint8, CHICAGO_N);
++  gint32 sizes[100] = { 0, };
++  gint32 selected[8] = { -2, -2, -2, -2, -2, -2, -2, -2 };
++  const gint threshold = CHICAGO_N < 6000 ? 350 : 500;
++  gint count;
++
++  count = label_components (image, labels, sizes, 70);
++  select_components (sizes, count, selected, 3, threshold);
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    {
++      image[pixel] = 0;
++      for (guint j = 0; j < 3; j++)
++        if (labels[pixel] == selected[j])
++          image[pixel] = 0xff;
++    }
++  if (state->history_count < 3)
++    return;
++
++  for (guint slot = 0; slot < 3; slot++)
++    for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++      if (image[pixel] > 0 && state->history[slot][pixel] == value)
++        votes[pixel]++;
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    votes[pixel] = votes[pixel] > 2 ? 0xff : 0;
++  memset (sizes, 0, sizeof (sizes));
++  count = label_components (votes, labels, sizes, 0x1e);
++  selected[0] = selected[1] = selected[2] = -2;
++  select_components (sizes, count, selected, 3, 350);
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    if (out[pixel] == 0)
++      out[pixel] = labels[pixel] == selected[0] || labels[pixel] == selected[1] ||
++                   labels[pixel] == selected[2] ? value : 0;
++}
++
++/* 0x180017430: iterative 3x3 gap filling (256-entry neighbourhood table). */
++static void
++bridge_gaps (guint8 *image)
++{
++  static const guint8 table[256] = {
++    0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1,
++    0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1,
++    1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++    1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++    0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1,
++    0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
++    1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
++    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0,
++  };
++  const gint w = CHICAGO_W, h = CHICAGO_H;
++  gboolean changed;
++
++#define CHICAGO_BRIDGE_INDEX(p) \
++  (image[(p) + w - 1] + 2 * image[(p) + w] + 4 * image[(p) + w + 1] + 8 * image[(p) - 1] + \
++   16 * image[(p) + 1] + 32 * image[(p) - w - 1] + 64 * image[(p) - w] + 128 * image[(p) - w + 1])
++  do
++    {
++      changed = FALSE;
++      for (gint y = 1; y < h - 1; y++)
++        for (gint x = 1; x < w - 1; x++)
++          {
++            const gint p = y * w + x;
++
++            if (image[p] != 0 || (image[p - 1] != 1 && image[p + 1] != 1))
++              continue;
++            if (table[CHICAGO_BRIDGE_INDEX (p)] == 1)
++              {
++                image[p] = 1;
++                changed = TRUE;
++                x++;
++              }
++          }
++      for (gint x = 1; x < w - 1; x++)
++        for (gint y = 1; y < h - 1; y++)
++          {
++            const gint p = y * w + x;
++
++            if (image[p] != 0 || (image[p - w] != 1 && image[p + w] != 1))
++              continue;
++            if (table[CHICAGO_BRIDGE_INDEX (p)] == 1)
++              {
++                image[p] = 1;
++                changed = TRUE;
++                y++;
++              }
++          }
++    }
++  while (changed);
++#undef CHICAGO_BRIDGE_INDEX
++}
++
++/* 0x180012df0 (type 24): live-auxiliary record F+0x148[0..5] and the final
++ * packed resolution (0x180052860), with the DLL's cross-frame state. */
++static void
++build_live_auxiliary (GoodixChicagoFeatureState *state,
++                      const guint8              *prepared,
++                      const guint8              *mask,
++                      const guint8               context[6],
++                      guint                      coverage,
++                      gint                       class1,
++                      gint                       class2,
++                      guint32                   *packed,
++                      guint8                     auxiliary[6])
++{
++  g_autofree guint8 *work = g_new (guint8, CHICAGO_N);
++  g_autofree guint8 *classes = g_new0 (guint8, CHICAGO_N);
++  g_autofree guint8 *stable = g_new0 (guint8, CHICAGO_N);
++  g_autofree guint8 *bright = g_new (guint8, CHICAGO_N);
++  const gint mode = context[1];
++  const gint state0 = context[0], state2 = context[2], signal = context[4];
++  gint count1 = 0, count2 = 0, dark = 0;
++  gint peak = state0, level = class2;
++  gboolean spread = FALSE;
++
++  if (mode != 2)
++    state->last_coverage = coverage;
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    work[pixel] = prepared[pixel] < 0x80 ? 0xff : 0;
++  select_stable_components (state, work, 1, stable);
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    if (work[pixel] > 0)
++      classes[pixel] = 1;
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    work[pixel] = prepared[pixel] >= 0x80 && mask[pixel] > 0 ? 0xff : 0;
++  select_stable_components (state, work, 2, stable);
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    if (work[pixel] > 0)
++      classes[pixel] = 2;
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    bright[pixel] = prepared[pixel] >= 0x80;
++  bridge_gaps (bright);
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    {
++      if (stable[pixel] == 1)
++        count1++;
++      else if (stable[pixel] == 2)
++        count2++;
++      if (bright[pixel] == 0 && prepared[pixel] < 30)
++        dark++;
++    }
++
++  if (count1 > 300 || count2 > 300 || count1 + count2 > 400)
++    {
++      spread = TRUE;
++      peak = MAX (state0 + 1, 3);
++      level = MAX (level, 4);
++      if (dark * 100 <= signal << 8)
++        peak = 6;
++      else if (dark * 100 <= signal * 300)
++        peak = 5;
++    }
++  if (dark * 100 <= signal << 8)
++    peak = MAX (peak, 2);
++
++  if (mode != 2)
++    {
++      state->last_level = level;
++      if (state->stable_count < 5 && (level > 1 || peak > 1 || state2 > 1))
++        state->stable_count++;
++      if (state->stable_count > 0 && level < 2 && peak < 2 && state2 < 2)
++        state->stable_count--;
++    }
++  else
++    {
++      level = MAX (level, state->last_level);
++      state->last_level = level;
++    }
++  if (state->stable_count >= 3)
++    level = MAX (level, 2);
++  *packed = ((guint32) level << 8) + (guint32) class1;
++
++  if (coverage >= 75 && (mode != 2 || state->last_coverage < 75))
++    {
++      if (state->history_count >= 3)
++        {
++          memmove (state->history[0], state->history[1], sizeof (state->history[0]));
++          memmove (state->history[1], state->history[2], sizeof (state->history[0]));
++          memcpy (state->history[2], classes, CHICAGO_N);
++        }
++      else
++        {
++          memcpy (state->history[state->history_count], classes, CHICAGO_N);
++        }
++      state->history_count = MIN (state->history_count + 1, 3);
++    }
++
++  auxiliary[0] = (guint8) peak;
++  auxiliary[1] = (guint8) mode;
++  auxiliary[2] = (guint8) state2;
++  auxiliary[3] = (guint8) (class2 + 4);
++  auxiliary[4] = 0;
++  auxiliary[5] = (guint8) spread;
++}
++
++/* 0x180011a50: status classification; `weak` = cbuf[0] lets records with a
++ * low coherence annotation vote as positive.  Returns FALSE (leaving
++ * `consensus` untouched, as the DLL leaves F+0x158..0x160) when nothing votes. */
++static gboolean
++classify_status_dll (GoodixChicagoFeatureRecord    *records,
++                     guint                          count,
++                     const guint8                  *annotations,
++                     gint                           weak,
++                     GoodixChicagoFeatureConsensus *consensus)
++{
++  guint positive = 0;
++
++  for (guint index = 0; index < count; index++)
++    {
++      guint8 *bytes = (guint8 *) &records[index];
++      const gint8 annotation = (gint8) annotations[index];
++
++      if ((gint8) bytes[0x38] > 0 || (weak > 2 && annotation < 30) ||
++          (weak > 1 && annotation < 20))
++        {
++          bytes[0x38] = 2;
++          positive++;
++        }
++    }
++  if (positive == 0)
++    return FALSE;
++  /* The positive marks are already in place, so the recovered pass sees at
++   * least one positive record and only redoes the (idempotent) marking. */
++  return goodix_chicago_feature_classify_status_full (records, count, 24, consensus);
++}
++
++/* 0x180036c70 mode 2 with 0x18003b2d0: when the region plane has at least 50
++ * zero pixels, drop records with more than one zero pixel in their clipped
++ * 5x5 neighbourhood (tail-swap removal, as the mask filter). */
++static guint
++filter_region (const guint8               *region,
++               GoodixChicagoFeatureRecord *records,
++               guint                       count)
++{
++  const gint w = CHICAGO_W, h = CHICAGO_H, radius = 2;
++  g_autofree guint16 *integral = g_new0 (guint16, (w + 1) * (h + 1));
++  g_autofree guint16 *zeros = g_new0 (guint16, CHICAGO_N);
++  guint zero_count = 0;
++  guint index = 0;
++
++  for (gint y = 0; y < h; y++)
++    for (gint x = 0; x < w; x++)
++      {
++        const guint16 indicator = region[y * w + x] == 0;
++
++        zero_count += indicator;
++        integral[(y + 1) * (w + 1) + x + 1] =
++          integral[y * (w + 1) + x + 1] - integral[y * (w + 1) + x] +
++          integral[(y + 1) * (w + 1) + x] + indicator;
++      }
++  if (zero_count == 0 || zero_count < 50)
++    return count;
++  for (gint y = 0; y < h; y++)
++    for (gint x = 0; x < w; x++)
++      {
++        const gint left = x - radius > 0 ? x - radius : 0;
++        const gint right = MIN (x + radius + 1, w);
++        const gint top = y - radius > 0 ? y - radius : 0;
++        const gint bottom = MIN (y + radius + 1, h);
++
++        zeros[y * w + x] = (guint16) (integral[top * (w + 1) + left] -
++                                      integral[top * (w + 1) + right] -
++                                      integral[bottom * (w + 1) + left] +
++                                      integral[bottom * (w + 1) + right]);
++      }
++  while (index < count)
++    {
++      const gint x = ((guint16) records[index].refined_x + 0x80) >> 8;
++      const gint y = ((guint16) records[index].refined_y + 0x80) >> 8;
++
++      if (x < w && y < h && zeros[y * w + x] > 1)
++        {
++          count--;
++          if (index != count)
++            records[index] = records[count];
++          memset (&records[count], 0, sizeof (records[count]));
++          continue;
++        }
++      index++;
++    }
++  return count;
++}
++
++/* 0x180015cd0: mode 1 (identify) also stores the bit-reversed word at +0x24
++ * and the "shifted" tail at +0x30 used by the matcher's 180-degree variant. */
++void
++goodix_chicago_feature_pack_record_mode (GoodixChicagoFeatureRecord *record,
++                                         gboolean                    identify)
++{
++  guint8 *bytes = (guint8 *) record;
++  guint32 word;
++
++  memcpy (&word, bytes + 0x20, sizeof (word));
++  goodix_chicago_feature_pack_record (record, FALSE);
++  if (!identify)
++    return;
++  {
++    guint32 reversed = 0;
++    const guint8 tail[8] = {
++      bytes[0x28], (guint8) ~bytes[0x29], (guint8) ~bytes[0x2a], bytes[0x2b],
++      bytes[0x2f], bytes[0x2e], bytes[0x2d], bytes[0x2c],
++    };
++
++    for (guint bit = 0; bit < 32; bit++)
++      reversed |= ((word >> bit) & 1u) << (31 - bit);
++    memcpy (bytes + 0x24, &reversed, sizeof (reversed));
++    memcpy (bytes + 0x30, tail, sizeof (tail));
++  }
++}
++
++/* 0x180010b30 retry: when the first pass (kernel selectors 0/1) collects at
++ * most 60 candidates, the gradient input is rebuilt with selectors 100/101
++ * (table 0x180092860) and the candidates are collected again; the scale space
++ * of type 24 (selectors 0x12c..0x134) does not depend on the pass. */
++static const ChicagoKernel gradient_input_kernels_retry[2] = {
++  { 9, { 0x0036, 0x02f5, 0x1393, 0x3cda, 0x58d0, 0x3cda, 0x1393, 0x02f5,
++         0x0036 } },
++  { 7, { 0x005a, 0x08d4, 0x3ce1, 0x73e2, 0x3ce1, 0x08d4, 0x005a } },
++};
++
++static void
++build_gradient_input_retry (const guint8 feature_image[GOODIX_CHICAGO_FEATURE_PIXELS],
++                            gint32       input[GOODIX_CHICAGO_FEATURE_PIXELS])
++{
++  g_autofree guint16 *lifted = g_new (guint16, CHICAGO_N);
++  g_autofree guint16 *filtered0 = g_new (guint16, CHICAGO_N);
++  g_autofree guint16 *filtered1 = g_new (guint16, CHICAGO_N);
++
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    lifted[pixel] = (guint16) feature_image[pixel] << 8;
++  filter_q16 (lifted, filtered0, &gradient_input_kernels_retry[0]);
++  filter_q16 (filtered0, filtered1, &gradient_input_kernels_retry[1]);
++  for (guint pixel = 0; pixel < CHICAGO_N; pixel++)
++    input[pixel] = 10 * (gint32) filtered0[pixel] - 9 * (gint32) filtered1[pixel];
++}
++
++/* 0x180014e60 for type 24: as goodix_chicago_feature_collect_candidates(),
++ * except that (1) a rejected extremum keeps the strength the refinement left
++ * in the candidate (it is updated before the determinant test), and (2) the
++ * rejected extrema are only used when fewer than 60 records were found and
++ * both quality and coverage exceed 80. */
++static guint
++collect_candidates_dll (const guint8                feature_source[GOODIX_CHICAGO_FEATURE_PIXELS],
++                        const guint16               scales[GOODIX_CHICAGO_FEATURE_SCALES]
++                        [GOODIX_CHICAGO_FEATURE_PIXELS],
++                        const guint32               magnitude[GOODIX_CHICAGO_FEATURE_PIXELS],
++                        const gint16                orientation[GOODIX_CHICAGO_FEATURE_PIXELS],
++                        guint                       quality,
++                        guint                       coverage,
++                        GoodixChicagoFeatureRecord *records,
++                        GoodixChicagoFeatureRank   *ranks,
++                        GoodixChicagoFeatureAux    *aux,
++                        guint                       capacity)
++{
++  enum { FALLBACK_CAPACITY = 600 };
++  g_autofree GoodixChicagoExtremum *extrema = NULL;
++  g_autofree GoodixChicagoCandidate *fallback = g_new0 (GoodixChicagoCandidate, FALLBACK_CAPACITY);
++  guint8 visited[GOODIX_CHICAGO_FEATURE_PIXELS] = { 0, };
++  guint extrema_count;
++  guint fallback_count = 0;
++  guint count = 0;
++
++  extrema_count = goodix_chicago_feature_collect_extrema (scales, NULL, 0);
++  extrema = g_new (GoodixChicagoExtremum, MAX (extrema_count, 1));
++  goodix_chicago_feature_collect_extrema (scales, extrema, extrema_count);
++
++  for (guint index = 0; index < extrema_count; index++)
++    {
++      const GoodixChicagoExtremum *extremum = &extrema[index];
++      GoodixChicagoCandidate candidate = {
++        .x = extremum->x,
++        .y = extremum->y,
++        .scale = extremum->scale,
++        .strength = extremum->response,
++      };
++      guint32 curvature = 0;
++
++      if (goodix_chicago_feature_refine_extremum (scales, &candidate, &curvature))
++        {
++          const guint pixel = candidate.y * CHICAGO_W + candidate.x;
++
++          if (visited[pixel] != 0)
++            continue;
++          if (count < capacity)
++            {
++              goodix_chicago_feature_materialize_candidate (
++                feature_source, magnitude, orientation, &candidate, count,
++                &records[count], &ranks[count], &aux[count]);
++              count++;
++            }
++          visited[pixel] = 1;
++        }
++      else if (fallback_count < FALLBACK_CAPACITY)
++        {
++          const guint32 scale_value = chicago_exp2_q16 ((extremum->scale << 16) / 6);
++
++          fallback[fallback_count++] = (GoodixChicagoCandidate){
++            .x = extremum->x,
++            .y = extremum->y,
++            .scale = extremum->scale,
++            .strength = candidate.strength,
++            .refined_x = (gint16) (extremum->x << 8),
++            .refined_y = (gint16) (extremum->y << 8),
++            .scale_value = (gint32) (((guint64) scale_value * 0x13333) >> 16),
++          };
++        }
++    }
++
++  if (count < 60 && quality > 80 && coverage > 80)
++    {
++      for (guint index = 0; index < fallback_count && count < 120; index++)
++        {
++          const GoodixChicagoCandidate *candidate = &fallback[index];
++          const guint pixel = candidate->y * CHICAGO_W + candidate->x;
++
++          if (visited[pixel] != 0)
++            continue;
++          if (count < capacity)
++            {
++              goodix_chicago_feature_materialize_candidate (
++                feature_source, magnitude, orientation, candidate, count,
++                &records[count], &ranks[count], &aux[count]);
++              count++;
++            }
++          visited[pixel] = 1;
++        }
++    }
++  return count;
++}
++
++/* 0x180016680 */
++static void
++score_neighbors_dll (GoodixChicagoFeatureRecord *records,
++                     guint                       count,
++                     guint                       density_class,
++                     const guint8               *annotations,
++                     const guint8               *secondary,
++                     guint8                     *secondary_score)
++{
++  if (density_class == 0)
++    {
++      for (guint index = 0; index < count; index++)
++        ((guint8 *) &records[index])[0x39] = 0;
++      return;
++    }
++  goodix_chicago_feature_score_neighbors (records, annotations, count);
++  for (guint index = 0; index < count; index++)
++    {
++      const guint8 *center = (const guint8 *) &records[index];
++      gint sum = 0, samples = 1;
++
++      for (guint other = 0; other < count; other++)
++        {
++          const guint8 *neighbor = (const guint8 *) &records[other];
++          const gint dx = (gint) neighbor[3] - center[3];
++          const gint dy = (gint) center[5] - neighbor[5];
++          const gint squared = dx * dx + dy * dy;
++
++          if (other == index || squared == 0 || squared > 0xff)
++            continue;
++          sum += (gint8) secondary[other];
++          samples += 100;
++        }
++      secondary_score[index] = (guint8) (sum * 100 / samples);
++    }
++}
++
++guint
++goodix_chicago_feature_get_feature (GoodixChicagoFeatureState     *state,
++                                    const guint8                   image[GOODIX_CHICAGO_FEATURE_PIXELS],
++                                    const guint8                   context[6],
++                                    guint                          quality,
++                                    guint                          coverage,
++                                    gboolean                       identify,
++                                    GoodixChicagoFeatureRecord    *records,
++                                    guint                          capacity,
++                                    guint                         *active_count,
++                                    GoodixChicagoFeatureConsensus *consensus,
++                                    guint32                       *packed_resolution,
++                                    guint8                         live_auxiliary[6])
++{
++  enum { COLLECTION_CAPACITY = 600 };
++  g_autofree guint16 (*scales)[GOODIX_CHICAGO_FEATURE_PIXELS] = NULL;
++  g_autofree guint8 *prepared = g_new (guint8, CHICAGO_N);
++  g_autofree guint8 *feature_source = g_new (guint8, CHICAGO_N);
++  g_autofree guint8 *mask = g_new (guint8, CHICAGO_N);
++  g_autofree guint8 *region = g_new (guint8, CHICAGO_N);
++  g_autofree gint32 *gradient_input = g_new (gint32, CHICAGO_N);
++  g_autofree guint32 *magnitude = g_new (guint32, CHICAGO_N);
++  g_autofree gint16 *orientation = g_new (gint16, CHICAGO_N);
++  g_autofree GoodixChicagoFeatureRecord *collected = g_new0 (GoodixChicagoFeatureRecord, COLLECTION_CAPACITY);
++  g_autofree GoodixChicagoFeatureRank *ranks = g_new0 (GoodixChicagoFeatureRank, COLLECTION_CAPACITY);
++  g_autofree GoodixChicagoFeatureAux *collected_aux = g_new0 (GoodixChicagoFeatureAux, COLLECTION_CAPACITY);
++  g_autofree GoodixChicagoFeatureAux *selected_aux = g_new0 (GoodixChicagoFeatureAux, MAX (capacity, 1));
++  guint8 annotations[GOODIX_CHICAGO_FEATURE_RECORD_LIMIT] = { 0, };
++  guint8 secondary[GOODIX_CHICAGO_FEATURE_RECORD_LIMIT] = { 0, };
++  guint8 secondary_score[GOODIX_CHICAGO_FEATURE_RECORD_LIMIT] = { 0, };
++  GoodixChicagoFeatureConsensus fresh;
++  guint32 packed = 0;
++  gboolean has_region;
++  gint class1, class2;
++  guint count, active;
++
++  g_return_val_if_fail (state != NULL && image != NULL && context != NULL, 0);
++  g_return_val_if_fail (capacity <= GOODIX_CHICAGO_FEATURE_RECORD_LIMIT, 0);
++
++  has_region = goodix_chicago_feature_decode_mark (image, &packed, region);
++  class1 = resolution_class ((gint) (packed & 3));
++  class2 = (packed >> 8) & 7;
++  class2 = resolution_class (class2 > 0 ? class2 + 4 : 0);
++  if (context[3] > 0)
++    class2 = resolution_class (context[3]);
++
++  goodix_chicago_feature_build_mask (image, mask);
++  goodix_chicago_feature_build_prepared_image (image, prepared);
++  goodix_chicago_feature_build_source (image, feature_source);
++  build_live_auxiliary (state, prepared, mask, context, coverage, class1, class2,
++                        &packed, live_auxiliary);
++
++  /* 0x180010b30: the recovered extraction front half. */
++  scales = g_malloc_n (GOODIX_CHICAGO_FEATURE_SCALES, sizeof (*scales));
++  goodix_chicago_feature_build_scale_space (image, scales);
++  goodix_chicago_feature_build_gradient_input (prepared, gradient_input);
++  goodix_chicago_feature_build_gradients (gradient_input, magnitude, orientation);
++  count = collect_candidates_dll (
++    feature_source, (const guint16 (*)[GOODIX_CHICAGO_FEATURE_PIXELS]) scales,
++    magnitude, orientation, quality, coverage, collected, ranks, collected_aux,
++    COLLECTION_CAPACITY);
++  if (count <= 60)
++    {
++      build_gradient_input_retry (prepared, gradient_input);
++      goodix_chicago_feature_build_gradients (gradient_input, magnitude, orientation);
++      memset (collected, 0, COLLECTION_CAPACITY * sizeof (*collected));
++      memset (ranks, 0, COLLECTION_CAPACITY * sizeof (*ranks));
++      memset (collected_aux, 0, COLLECTION_CAPACITY * sizeof (*collected_aux));
++      count = collect_candidates_dll (
++        feature_source, (const guint16 (*)[GOODIX_CHICAGO_FEATURE_PIXELS]) scales,
++        magnitude, orientation, quality, coverage, collected, ranks, collected_aux,
++        COLLECTION_CAPACITY);
++    }
++  if (count > capacity)
++    {
++      for (guint index = 1; index < count; index++)
++        {
++          const GoodixChicagoFeatureRank rank = ranks[index];
++          guint position = index;
++
++          while (position > 0 &&
++                 (ranks[position - 1].strength > rank.strength ||
++                  (ranks[position - 1].strength == rank.strength &&
++                   ranks[position - 1].index > rank.index)))
++            {
++              ranks[position] = ranks[position - 1];
++              position--;
++            }
++          ranks[position] = rank;
++        }
++      count = capacity;
++      for (guint index = 0; index < count; index++)
++        {
++          records[index] = collected[ranks[index].index];
++          selected_aux[index] = collected_aux[ranks[index].index];
++        }
++    }
++  else
++    {
++      for (guint index = 0; index < count; index++)
++        {
++          records[index] = collected[index];
++          selected_aux[index] = collected_aux[index];
++        }
++    }
++  for (guint index = 0; index < count; index++)
++    {
++      goodix_chicago_feature_build_descriptor (magnitude, orientation,
++                                               &selected_aux[index], &records[index]);
++      goodix_chicago_feature_finalize_record (&records[index]);
++    }
++
++  /* getFeature 0x180013c98 .. 0x180013f23 */
++  goodix_chicago_feature_build_annotations (image, mask, records, count, annotations);
++  /* identifyImage reuses one feature object, enrolAddImage allocates a zeroed
++   * one per call: without votes the identify object keeps the previous values. */
++  if (!identify)
++    memset (&fresh, 0, sizeof (fresh));
++  classify_status_dll (records, count, annotations, context[0],
++                       identify ? &state->consensus : &fresh);
++  count = goodix_chicago_feature_filter_mask (mask, records, count);
++  if (has_region)
++    count = filter_region (region, records, count);
++  for (guint index = 0; index < count; index++)
++    goodix_chicago_feature_pack_record_mode (&records[index], identify);
++  active = goodix_chicago_feature_partition_records (records, annotations, count);
++
++  {
++    const GoodixChicagoFeatureConsensus *current = identify ? &state->consensus : &fresh;
++
++    if (current->density_class == 1)
++      {
++        goodix_chicago_feature_build_annotations (prepared, mask, records, count, secondary);
++        score_neighbors_dll (records, count, 1, annotations, secondary, secondary_score);
++        for (guint index = 0; index < count; index++)
++          {
++            guint8 *bytes = (guint8 *) &records[index];
++
++            if (bytes[0x38] != 0 && (gint8) annotations[index] > 30 &&
++                (gint8) secondary_score[index] > 65 && (gint8) secondary[index] > 65 &&
++                (gint8) bytes[0x39] > 35)
++              bytes[0x38] = 0;
++          }
++      }
++    else
++      {
++        score_neighbors_dll (records, count, current->density_class, annotations,
++                             secondary, secondary_score);
++      }
++    if (consensus)
++      *consensus = *current;
++  }
++
++  if (active_count)
++    *active_count = active;
++  if (packed_resolution)
++    *packed_resolution = packed;
++  return count;
++}
++
++/* Bytes 0..5 of the DLL preprocessor's per-frame buffer (cbuf), which
++ * getFeature reads through 0x180052310.  The DLL fills it in 0x180043c70
++ * ({state, purpose, counter, class code, share 0..100, 0}); the port's
++ * preprocessor does not, so this approximation takes byte 0 (peak state) and
++ * byte 3 (class code) from its resolution analysis, byte 4 = 100 and bytes
++ * 1, 2 = 0.  Test harnesses substitute the DLL's bytes. */
++void
++goodix_chicago_feature_preprocessor_context (GoodixChicagoPreprocessor *preprocessor,
++                                             const guint16              raw[GOODIX_CHICAGO_PIXELS],
++                                             guint8                     context[6])
++{
++  g_autofree guint8 *labels = g_new (guint8, GOODIX_CHICAGO_PIXELS);
++  guint peak_state = 0, code = 0;
++  gboolean auxiliary = FALSE;
++
++  memset (context, 0, 6);
++  goodix_chicago_preprocessor_build_resolution_map_full (preprocessor, raw, labels, &peak_state);
++  goodix_chicago_preprocessor_classify_resolution_labels (0x18, labels, GOODIX_CHICAGO_PIXELS,
++                                                         GOODIX_CHICAGO_PIXELS, &code, &auxiliary);
++  context[0] = (guint8) peak_state;
++  context[3] = (guint8) code;
++  context[4] = 100;
++}
+--- a/goodix-chicago-runtime.c	2026-09-28 12:29:44.350010326 +0300
++++ b/goodix-chicago-runtime.c	2026-09-28 12:39:08.992791270 +0300
+@@ -6,6 +6,7 @@
+ #include <string.h>
+ 
+ #include "goodix-chicago-feature.h"
++#include "goodix-chicago-feature-dll.h"
+ #include "goodix-chicago-match.h"
+ #include "goodix-chicago-template.h"
+ 
+@@ -15,18 +16,32 @@
+   GoodixChicagoSubtemplateView view;
+ };
+ 
++/* AlgoChicago keeps getFeature's cross-frame state in process globals; so
++ * does this port (docs/stage3-features.md). */
++static GoodixChicagoFeatureState feature_state;
++
++void
++goodix_chicago_runtime_reset_feature_state (void)
++{
++  goodix_chicago_feature_state_init (&feature_state);
++}
++
++/* enrolAddImage (identify = FALSE) / identifyImage (TRUE) feature path:
++ * preprocessor, then getFeature 0x180013490 with the preprocessor context. */
+ GoodixChicagoRuntimeProbe *
+-goodix_chicago_runtime_prepare_probe (
++goodix_chicago_runtime_prepare_probe_mode (
+   GoodixChicagoPreprocessor  *preprocessor,
+   const guint16               raw[GOODIX_CHICAGO_PIXELS],
++  gboolean                    identify,
+   GoodixChicagoRuntimeReject *reject,
+   GError                    **error)
+ {
+   guint8 enhanced[GOODIX_CHICAGO_FEATURE_PIXELS];
+-  guint8 resolution_labels[GOODIX_CHICAGO_PIXELS];
++  guint8 context[6];
+   GoodixChicagoFeatureRecord records[GOODIX_CHICAGO_FEATURE_RECORD_LIMIT];
+   GoodixChicagoFeatureConsensus consensus;
+-  GoodixChicagoFeatureLiveAuxiliary live_auxiliary;
++  guint8 live_auxiliary[6];
++  guint32 packed_resolution = 0;
+   GoodixChicagoMetricData metric_data;
+   GoodixChicagoEnrollmentResult result;
+ 
+@@ -36,9 +51,6 @@
+   guint8 quality;
+   guint8 coverage;
+   GoodixChicagoPreprocessStatus preprocess_status;
+-  guint resolution_code;
+-  guint resolution_peak_state;
+-  gboolean resolution_auxiliary;
+ 
+   g_return_val_if_fail (preprocessor != NULL, NULL);
+   g_return_val_if_fail (raw != NULL, NULL);
+@@ -60,9 +72,13 @@
+       return NULL;
+     }
+ 
++  goodix_chicago_feature_preprocessor_context (preprocessor, raw, context);
+   memset (records, 0, sizeof (records));
+-  record_count = goodix_chicago_feature_extract_subtemplate_full (
+-    enhanced, records, G_N_ELEMENTS (records), &active_count, &consensus);
++  memset (&consensus, 0, sizeof (consensus));
++  record_count = goodix_chicago_feature_get_feature (
++    &feature_state, enhanced, context, quality, coverage, identify, records,
++    G_N_ELEMENTS (records), &active_count, &consensus, &packed_resolution,
++    live_auxiliary);
+   if (record_count == 0)
+     {
+       if (reject)
+@@ -71,15 +87,7 @@
+     }
+ 
+   goodix_chicago_enrollment_build_metric_data (enhanced, &metric_data);
+-  goodix_chicago_preprocessor_build_resolution_map_full (
+-    preprocessor, raw, resolution_labels, &resolution_peak_state);
+-  goodix_chicago_preprocessor_classify_resolution_labels (
+-    0x18, resolution_labels, GOODIX_CHICAGO_PIXELS,
+-    GOODIX_CHICAGO_PIXELS, &resolution_code, &resolution_auxiliary);
+-  metric_data.packed_resolution =
+-    goodix_chicago_preprocessor_pack_resolution_code (resolution_code);
+-  goodix_chicago_feature_build_live_auxiliary (
+-    resolution_peak_state, metric_data.packed_resolution, &live_auxiliary);
++  metric_data.packed_resolution = packed_resolution;
+   probe = g_new0 (GoodixChicagoRuntimeProbe, 1);
+   probe->enrollment = goodix_chicago_enrollment_new ();
+   if (!goodix_chicago_enrollment_insert_first (
+@@ -96,11 +104,22 @@
+   probe->view.density_positive_percent = consensus.positive_percent;
+   probe->view.density_class = consensus.density_class;
+   probe->view.density_inactive_count = consensus.inactive_count;
+-  probe->view.live_auxiliary = live_auxiliary;
++  memcpy (probe->view.live_auxiliary.values, live_auxiliary, 6);
+ 
+   return g_steal_pointer (&probe);
+ }
+ 
++GoodixChicagoRuntimeProbe *
++goodix_chicago_runtime_prepare_probe (
++  GoodixChicagoPreprocessor  *preprocessor,
++  const guint16               raw[GOODIX_CHICAGO_PIXELS],
++  GoodixChicagoRuntimeReject *reject,
++  GError                    **error)
++{
++  return goodix_chicago_runtime_prepare_probe_mode (preprocessor, raw, TRUE,
++                                                    reject, error);
++}
++
+ void
+ goodix_chicago_runtime_probe_free (GoodixChicagoRuntimeProbe *probe)
+ {
+--- /dev/null
++++ b/goodix-chicago-feature-dll.h	2026-09-28 12:39:08.992602132 +0300
+@@ -0,0 +1,70 @@
++// SPDX-License-Identifier: LGPL-2.1-or-later
++/* Copyright (C) 2026 Berke Kabagöz <berkekbgz@gmail.com> */
++
++/* AlgoChicago.dll getFeature (0x180013490) additions, docs/stage3-features.md
++ * of the FingerprintDriver_27c6_5125 project (tools/algo/port_feature_fixes.patch). */
++
++#pragma once
++
++#include "goodix-chicago-feature.h"
++#include "goodix-chicago-preprocess.h"
++#include "goodix-chicago-runtime.h"
++
++G_BEGIN_DECLS
++/* AlgoChicago.dll getFeature 0x180013490 (template type 24) as a whole,
++ * docs/stage3-features.md.  The DLL keeps cross-frame state in globals
++ * (0x1800ca198.., 0x1800d8750..) and reuses one feature object for identify;
++ * both live here.  Initialise with goodix_chicago_feature_state_init(). */
++typedef struct
++{
++  gint                          last_coverage;  /* 0x1800ca19c */
++  gint                          history_count;  /* 0x1800ca198 */
++  gint                          stable_count;   /* 0x1800d8750 */
++  gint                          last_level;     /* 0x1800d8754 */
++  guint8                        history[3][GOODIX_CHICAGO_FEATURE_PIXELS]; /* 0x1800ca1a0 */
++  GoodixChicagoFeatureConsensus consensus;      /* identify object F+0x158..0x160 */
++} GoodixChicagoFeatureState;
++
++void goodix_chicago_feature_state_init (GoodixChicagoFeatureState *state);
++
++gboolean goodix_chicago_feature_decode_mark (const guint8 image[GOODIX_CHICAGO_FEATURE_PIXELS],
++                                             guint32     *packed,
++                                             guint8       region[GOODIX_CHICAGO_FEATURE_PIXELS]);
++
++void goodix_chicago_feature_pack_record_mode (GoodixChicagoFeatureRecord *record,
++                                              gboolean                    identify);
++
++/* @context: bytes 0..5 of the preprocessor's per-frame buffer (cbuf).
++ * @identify: 5th getFeature argument (0 enrolAddImage, 1 identifyImage).
++ * Returns the record count (F+0xf0). */
++guint goodix_chicago_feature_get_feature (GoodixChicagoFeatureState     *state,
++                                          const guint8                   image[GOODIX_CHICAGO_FEATURE_PIXELS],
++                                          const guint8                   context[6],
++                                          guint                          quality,
++                                          guint                          coverage,
++                                          gboolean                       identify,
++                                          GoodixChicagoFeatureRecord    *records,
++                                          guint                          capacity,
++                                          guint                         *active_count,
++                                          GoodixChicagoFeatureConsensus *consensus,
++                                          guint32                       *packed_resolution,
++                                          guint8                         live_auxiliary[6]);
++
++/* Bytes 0..5 of the preprocessor per-frame buffer (approximation, see .c). */
++void goodix_chicago_feature_preprocessor_context (GoodixChicagoPreprocessor *preprocessor,
++                                                  const guint16              raw[GOODIX_CHICAGO_PIXELS],
++                                                  guint8                     context[6]);
++
++
++/* FFIXES (docs/stage3-features.md): getFeature as in AlgoChicago.dll.
++ * identify = FALSE for enrollment samples (enrolAddImage), TRUE for probes;
++ * prepare_probe() is the identify variant. */
++GoodixChicagoRuntimeProbe *goodix_chicago_runtime_prepare_probe_mode (GoodixChicagoPreprocessor  *preprocessor,
++                                                                      const guint16               raw[GOODIX_CHICAGO_PIXELS],
++                                                                      gboolean                    identify,
++                                                                      GoodixChicagoRuntimeReject *reject,
++                                                                      GError                    **error);
++
++void goodix_chicago_runtime_reset_feature_state (void);
++
++G_END_DECLS

@@ -44,6 +44,9 @@
 - `libfprint/` — форк goodix-fp-linux-dev/libfprint (ветка `buildpackage`), наш драйвер:
   `libfprint/drivers/goodixtls/goodix5125.{c,h}`.
 - `deps/root/` — локально распакованные `libgusb`, `opencv` (в систему не ставились).
+- `tools/algo/` — нативный запуск вендорского алгоритма Goodix (Win64 DLL) без wine:
+  `winpe.c` (загрузчик), `algolog.c` (перехват лога DLL), `algo_eval4.c` (эталонная offline-оценка),
+  `re/notes/` — разбор DLL (начинать с `00-overview.md`, статус и план — `70-status.md`).
 - `win-driver/` — файлы Windows-драйвера 1.1.125.20 (не коммитить).
 - `dumps/` — логи, кадры, датасет `dumps/dataset/` (не коммитить).
 
@@ -65,17 +68,26 @@ ninja -C build
 tools/libfprint_test.sh          # снимок + регистрация + проверка
 tools/libfprint_verify_test.sh   # 10 проверок по сохранённой регистрации
 
-# Offline-оценка алгоритмов сравнения на датасете
-cd tools/tune && ../../.venv/bin/python eval_all.py
+# Offline-оценка вендорского алгоритма на датасете (нужны dumps/dataset, win-driver/)
+cd tools/algo && ../../.venv/bin/python export_raw.py
+cc -O1 -o algo_eval4 algo_eval4.c winpe.c algolog.c && ALGO=milan ./algo_eval4 15
 ```
 
 Примеры libfprint запускать с `LD_LIBRARY_PATH=deps/root/usr/lib`.
 Python `protocol.read(timeout=...)` — в секундах; SIGINT не прерывает ожидание в libusb,
 для тестов без пальца задавать короткий таймаут.
 
+## Вендорский алгоритм — обязательные условия (иначе сравнение ломается молча)
+
+- Windows для chip id 0x2504 грузит `AlgoChicago.dll` + `ppp_param_init(12)`; `AlgoMilan.dll` + 10 тоже работает.
+- Кадр **транспонировать** в 64 строки × 80 столбцов; в заголовке изображения `+0x08` = ширина 80,
+  `+0x0a` = высота 64.
+- `templateUnPack(blob, len, NULL, &holder)` — третий аргумент строго NULL.
+- Аргументы вызовов — только по `tools/algo/re/notes/` (`00-overview.md`, «Эталонный конвейер»).
+
 ## Открытые задачи
 
-- Точность сравнения: sigfm на этом сенсоре не узнаёт свой палец в 76–88% попыток.
-  Палец на боковой кнопке ложится под разными углами (до 90°+) и разными участками.
-  Направление: склейка эталонов в «карту» пальца + SIFT/RANSAC. Мерить на `dumps/dataset`.
+- Точность: вендорский матчер на датасете — свой (естественные касания) ~71%, чужой 0%
+  (sigfm давал 12–24%). Дальше: калибровка (kr/calidata), штатный протокол регистрации,
+  встраивание в драйвер. Детали и план — `tools/algo/re/notes/70-status.md`.
 - Установка: PKGBUILD (provides/conflicts `libfprint`) + `fprintd` + PAM.

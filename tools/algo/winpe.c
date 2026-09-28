@@ -108,9 +108,30 @@ static MS int k_TlsSetValue(uint32_t i, void *v) {
   return 1;
 }
 
+// ---- fiber-local storage (newer CRTs): same single-thread table as TLS ----
+static MS uint32_t k_FlsAlloc(void *cb) { (void)cb; return g_tls_next++; }
+
 // ---- critical sections / slist (single threaded => no-ops) ----
 static MS int k_InitializeCriticalSectionAndSpinCount(void *c, uint32_t s) {
   (void)c; (void)s; return 1;
+}
+static MS int k_InitializeCriticalSectionEx(void *c, uint32_t s, uint32_t f) {
+  (void)c; (void)s; (void)f; return 1;
+}
+static MS void k_CriticalSectionNop(void *c) { (void)c; }
+
+// ---- kernel objects: fake handles, nothing ever runs concurrently ----
+// AlgoChicago's CRT/log code creates an event + worker thread at attach; the
+// thread is never started (the algorithm itself is synchronous).
+static MS void *k_FakeHandle(void) { return (void *)(intptr_t)0x1234; }
+static MS int k_True(void) { return 1; }
+static MS uint32_t k_WaitObject0(void) { return 0; }   // WAIT_OBJECT_0
+static MS void *k_InvalidHandle(void) { return (void *)(intptr_t)-1; }
+static MS void k_Sleep(uint32_t ms) { (void)ms; }
+static MS void k_GetLocalTime(uint16_t *st) {   // SYSTEMTIME
+  time_t t = time(NULL); struct tm tm; localtime_r(&t, &tm);
+  st[0] = tm.tm_year + 1900; st[1] = tm.tm_mon + 1; st[2] = tm.tm_wday;
+  st[3] = tm.tm_mday; st[4] = tm.tm_hour; st[5] = tm.tm_min; st[6] = tm.tm_sec; st[7] = 0;
 }
 static MS void k_InitializeSListHead(void *h) { if (h) memset(h, 0, 16); }
 
@@ -253,6 +274,19 @@ static const struct import_impl impls[] = {
   {"InitializeCriticalSectionAndSpinCount",
    k_InitializeCriticalSectionAndSpinCount},
   {"InitializeSListHead", k_InitializeSListHead},
+  {"FlsAlloc", k_FlsAlloc}, {"FlsFree", k_TlsFree},
+  {"FlsGetValue", k_TlsGetValue}, {"FlsSetValue", k_TlsSetValue},
+  {"InitializeCriticalSectionEx", k_InitializeCriticalSectionEx},
+  {"InitializeCriticalSection", k_CriticalSectionNop},
+  {"EnterCriticalSection", k_CriticalSectionNop},
+  {"LeaveCriticalSection", k_CriticalSectionNop},
+  {"DeleteCriticalSection", k_CriticalSectionNop},
+  {"CreateEventW", k_FakeHandle}, {"CreateThread", k_FakeHandle},
+  {"SetEvent", k_True}, {"CloseHandle", k_True},
+  {"WaitForSingleObject", k_WaitObject0},
+  {"WaitForMultipleObjects", k_WaitObject0},
+  {"CreateFileW", k_InvalidHandle}, {"FindFirstFileW", k_InvalidHandle},
+  {"Sleep", k_Sleep}, {"GetLocalTime", k_GetLocalTime},
   {"GetSystemTimeAsFileTime", k_GetSystemTimeAsFileTime},
   {"QueryPerformanceCounter", k_QueryPerformanceCounter},
   {"QueryPerformanceFrequency", k_QueryPerformanceFrequency},
@@ -397,3 +431,15 @@ void *winpe_load(const char *path) {
 }
 
 void *winpe_base(void) { return g_base; }
+
+// Redirect the function at preferred-base VA `va` to `fn` (an ms_abi function)
+// by overwriting its first 12 bytes with `movabs rax, fn; jmp rax`. Used to
+// route AlgoMilan's internal logger into our own printf for diagnostics.
+int winpe_hook(uint64_t va, void *fn) {
+  if (!g_base || !g_nt) return -1;
+  uint8_t *p = g_base + (va - g_nt->oh.imagebase);
+  p[0] = 0x48; p[1] = 0xb8;                 // movabs rax, imm64
+  memcpy(p + 2, &fn, 8);
+  p[10] = 0xff; p[11] = 0xe0;               // jmp rax
+  return 0;
+}

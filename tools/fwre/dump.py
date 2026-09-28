@@ -9,6 +9,7 @@ Usage:
   python -m fwre.dump <dll> callers <addr>      # functions that call addr
   python -m fwre.dump <dll> str <substr>        # find ascii+wide strings
   python -m fwre.dump <dll> exports             # list exports
+  python -m fwre.dump <dll> all                 # disasm every .pdata function (grep it)
 
 <dll> is e.g. AlgoMilan.dll or EngineAdapter.dll. <addr> accepts 0x-hex.
 Slot/export names from tools/algo/re/slots.json are used as annotations.
@@ -86,6 +87,10 @@ def main():
     elif cmd == "exports":
         for n, a in sorted(pe.exports.items(), key=lambda kv: kv[1]):
             print(hex(a), n)
+    elif cmd == "all":
+        for lo, hi in sorted(set(pe.funcs)):
+            print(f"; func {hex(lo)}..{hex(hi)}  ({names.get(lo,'')})")
+            print(pe.dis(lo, hi, names))
     else:
         print(__doc__)
 

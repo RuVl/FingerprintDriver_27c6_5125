@@ -1,5 +1,5 @@
 // Full vendor-pipeline matcher eval: replays the AlgoMilan pipeline exactly as
-// EngineAdapter does (RE in tools/algo/re/notes/40-pipeline-verified.md):
+// EngineAdapter does (historical; wrong image layout — use algo_eval4.c, notes/00-overview.md):
 //   INIT : ppp_param_init(10) -> preprocess_init_calidata() -> preprocessor_init(&cal)
 //   FRAME: preprocessor(raw16) -> 8-bit image
 //   ENROL: enrolStartEx -> enrolAddImage(pp)... -> enrolGetTemplate   (no destructor!)
@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "winpe.h"
+#include "algolog.h"
 
 #define MS __attribute__((ms_abi))
 #define W 64
@@ -118,6 +119,10 @@ int main(int argc, char **argv) {
 
   winpe_set_verbose(0);
   if (!winpe_load("../../win-driver/AlgoMilan.dll")) return 1;
+  if (getenv("ALGOLOG")) {   // route AlgoMilan's own diagnostics to stderr
+    winpe_hook(ALGO_LOG_VA, algolog_fn());
+    algolog_set(stderr, NULL);
+  }
   ppp = winpe_getproc("ppp_param_init");
   initcali = winpe_getproc("preprocess_init_calidata");
   ppinit = winpe_getproc("preprocessor_init");

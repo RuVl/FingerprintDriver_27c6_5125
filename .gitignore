@@ -28,3 +28,15 @@ tools/algo/algo_version
 *.o
 *.so
 *.bin
+tools/algo/algo_eval3
+tools/algo/algo_eval4
+tools/algo/port_eval
+tools/algo/port_eval_*
+tools/algo/.port-*/
+tools/algo/oracle_feat
+tools/algo/reeval_difftest
+
+# --- чужой upstream-код (клон ветки MR libfprint!648), ведётся своим git ---
+upstream/
+tools/algo/oracle_pp
+openchicago/tests/build/
