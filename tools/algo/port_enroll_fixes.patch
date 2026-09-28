@@ -1,5 +1,5 @@
---- a/goodix-chicago-enrollment.c	2026-09-28 21:36:02.289112161 +0300
-+++ b/goodix-chicago-enrollment.c	2026-09-28 21:36:02.290142540 +0300
+--- a/goodix-chicago-enrollment.c	2026-09-28 21:47:54.748089055 +0300
++++ b/goodix-chicago-enrollment.c	2026-09-28 21:47:54.749052568 +0300
 @@ -1034,17 +1034,28 @@
    return TRUE;
  }
@@ -163,7 +163,151 @@
    if (metric_a)
      *metric_a = native_metric_a;
    if (metric_b)
-@@ -2440,7 +2527,7 @@
+@@ -2369,6 +2456,143 @@
+   return uncovered < 20 ? 0 : uncovered;
+ }
+ 
++/* EFIXES: merging ungrouped subtemplates into the group (AlgoChicago 0x180018140 with
++ * 0x1800183a0 / 0x180017f00), called from 0x180019580 when the template has a group,
++ * the new subtemplate joined it and some accepted evidence subtemplates are still
++ * ungrouped.  Relations R(a, b) (a > b) are the triangular slots; a merged subtemplate k
++ * gets a synthetic relation with the anchor (inliers 0): R(k, anchor) = t, or
++ * R(anchor, k) = t^-1 when k < anchor, where t is the k -> anchor chain below.
++ * The selector is 0x180050730 with inlier argument 0 (efix_selector). */
++static GoodixChicagoRelation *
++efix_relation (GoodixChicagoEnrollment *self, guint newer, guint older)
++{
++  const GoodixChicagoSubtemplate *subtemplate = g_ptr_array_index (self->subtemplates, newer);
++
++  return &g_array_index (self->relations, GoodixChicagoRelation,
++                         subtemplate->relation_base + older);
++}
++
++static GoodixChicagoSubtemplate *
++efix_sub (GoodixChicagoEnrollment *self, guint index)
++{
++  return g_ptr_array_index (self->subtemplates, index);
++}
++
++static void
++efix_join_anchor (GoodixChicagoEnrollment *self, guint k, const gint32 t[6])
++{
++  const guint anchor = self->group_anchor;
++  GoodixChicagoRelation *relation;
++
++  efix_sub (self, k)->group_state = 1;
++  if (k < anchor)
++    {
++      relation = efix_relation (self, anchor, k);
++      invert_group_transform (t, relation->transform);
++    }
++  else
++    {
++      relation = efix_relation (self, k, anchor);
++      memcpy (relation->transform, t, sizeof (relation->transform));
++    }
++  relation->inlier_count = 0;
++}
++
++static gint
++efix_pair_selector (GoodixChicagoEnrollment *self, guint newer, guint older)
++{
++  return efix_selector (&efix_sub (self, newer)->metric_data, &efix_sub (self, older)->metric_data,
++                        efix_relation (self, newer, older)->transform);
++}
++
++/* 0x1800183a0: downwards from j.  Each ungrouped k < j (descending) joins when some
++ * already joined node of the chain {j, joined k's} (latest first) has a relation to k
++ * (inliers >= 0) with selector > threshold; its transform to the anchor goes back along
++ * the chain through relations that exist. */
++static void
++efix_merge_down (GoodixChicagoEnrollment *self, const gint32 j_to_anchor[6], guint j,
++                 gint threshold)
++{
++  guint chain[GOODIX_CHICAGO_ENROLLMENT_CAPACITY + 1];
++  guint chain_len = 1;
++
++  chain[0] = j;
++  for (gint k = (gint) j - 1; k >= 0; k--)
++    {
++      if (efix_sub (self, k)->group_state == 1)
++        continue;
++      for (gint m = (gint) chain_len - 1; m >= 0; m--)
++        {
++          gint32 x[6], inverse[6], t[6];
++          guint last = m;
++
++          if (efix_relation (self, chain[m], k)->inlier_count <= -1 ||
++              efix_pair_selector (self, chain[m], k) <= threshold)
++            continue;
++          memcpy (x, efix_relation (self, chain[m], k)->transform, sizeof (x));
++          for (gint step = m - 1; step >= 0; step--)
++            {
++              const GoodixChicagoRelation *link = efix_relation (self, chain[step], chain[last]);
++
++              if (link->inlier_count > -1)
++                {
++                  gint32 composed[6];
++
++                  compose_group_transform (link->transform, x, composed);
++                  memcpy (x, composed, sizeof (x));
++                  last = step;
++                }
++            }
++          invert_group_transform (x, inverse);
++          compose_group_transform (j_to_anchor, inverse, t);
++          efix_join_anchor (self, k, t);
++          chain[chain_len++] = k;
++          break;
++        }
++    }
++}
++
++/* 0x180017f00: upwards from j, k = j + 1 .. count - 2 (the new subtemplate excluded):
++ * an ungrouped k with a relation to j (inliers >= 0) and selector > threshold joins. */
++static void
++efix_merge_up (GoodixChicagoEnrollment *self, const gint32 j_to_anchor[6], guint j,
++               gint threshold)
++{
++  const guint count = self->subtemplates->len;
++
++  for (guint k = j + 1; k + 2 <= count && k <= count - 2; k++)
++    {
++      gint32 t[6];
++
++      if (efix_sub (self, k)->group_state == 1 ||
++          efix_relation (self, k, j)->inlier_count <= -1 ||
++          efix_pair_selector (self, k, j) <= threshold)
++        continue;
++      compose_group_transform (j_to_anchor, efix_relation (self, k, j)->transform, t);
++      efix_join_anchor (self, k, t);
++    }
++}
++
++static void
++efix_merge_into_group (GoodixChicagoEnrollment *self, guint new_index,
++                       const guint *ungrouped, guint ungrouped_count)
++{
++  for (guint i = 0; i < ungrouped_count; i++)
++    {
++      const guint j = ungrouped[i];
++      gint32 inverse[6], j_to_anchor[6];
++
++      if (efix_pair_selector (self, new_index, j) <= 208)
++        continue;
++      invert_group_transform (efix_relation (self, new_index, j)->transform, inverse);
++      compose_group_transform (efix_relation (self, new_index, self->group_anchor)->transform,
++                               inverse, j_to_anchor);
++      efix_join_anchor (self, j, j_to_anchor);
++      efix_merge_down (self, j_to_anchor, j, 205);
++      efix_merge_up (self, j_to_anchor, j, 205);
++    }
++}
++
+ gboolean
+ goodix_chicago_enrollment_insert_next (
+   GoodixChicagoEnrollment          *self,
+@@ -2440,7 +2664,7 @@
         * list, but the triangular relation table keeps every affine result
         * with at least six inliers.  Only weaker transforms become the
         * identity sentinel. */
@@ -172,7 +316,7 @@
          {
            relations[index].inlier_count = -1;
            memcpy (relations[index].transform,
-@@ -2458,17 +2545,17 @@
+@@ -2458,17 +2682,17 @@
        if (!evidence[index] || relations[index].inlier_count < 6 ||
            (has_group && old_subtemplates[index]->group_state != 1))
          continue;
@@ -194,7 +338,7 @@
  
    new_subtemplate = g_new0 (GoodixChicagoSubtemplate, 1);
    new_subtemplate->record_count = record_count;
-@@ -2488,8 +2575,8 @@
+@@ -2488,8 +2712,8 @@
          {
            self->group_anchor = candidate;
            self->has_group_anchor = TRUE;
@@ -205,7 +349,28 @@
          }
      }
    g_ptr_array_add (self->subtemplates, new_subtemplate);
-@@ -3386,7 +3473,23 @@
+@@ -2552,6 +2776,20 @@
+       has_current_to_anchor = TRUE;
+     }
+ 
++  /* EFIXES 0x180019693..0x1800196c2: after joining/creating, accepted evidence still
++   * ungrouped is merged into the group (0x180018140). */
++  if (self->has_group_anchor && new_subtemplate->group_state == 1)
++    {
++      g_autofree guint *ungrouped = g_new (guint, MAX (old_count, 1u));
++      guint ungrouped_count = 0;
++
++      for (guint index = 0; index < old_count; index++)
++        if (evidence[index] && old_subtemplates[index]->group_state == 0)
++          ungrouped[ungrouped_count++] = index;
++      if (ungrouped_count > 0)
++        efix_merge_into_group (self, old_count, ungrouped, ungrouped_count);
++    }
++
+   result->packed_position_detail = GOODIX_CHICAGO_FIRST_POSITION_DETAIL;
+   /* AlgoChicago+0x1a0f0 walks backward only to skip subtemplates whose
+    * serialized adaptive state is 5, then tests that single relation.  Fresh
+@@ -3386,7 +3624,23 @@
    record->orientation = orientation < 0x80 ?
                          (gint16) orientation << 8 :
                          (gint16) - (((gint) orientation - 0x80) * 0x100);
@@ -230,7 +395,7 @@
    for (guint index = 0; index < 8; index++)
      {
        guint8 first = packed[4 + index * 2];
-@@ -3600,7 +3703,18 @@
+@@ -3600,7 +3854,18 @@
    if (!packed_cursor_container (&cursor, 0x93, &scheduler_state) ||
        scheduler_state.size != 20)
      goto invalid;
@@ -250,7 +415,7 @@
    if (!packed_cursor_container (&cursor, 0x94, &matcher_state) ||
        matcher_state.size != 1328 ||
        cursor.offset != cursor.size)
-@@ -3720,10 +3834,11 @@
+@@ -3720,10 +3985,11 @@
  
    g_byte_array_append (packed, (const guint8[]){ 0x93 }, 1);
    packed_append_u32 (packed, 20);

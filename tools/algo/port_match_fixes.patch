@@ -1,5 +1,5 @@
---- a/goodix-chicago-match.c	2026-09-28 21:34:38.856417346 +0300
-+++ b/goodix-chicago-match.c	2026-09-28 21:34:38.857508930 +0300
+--- a/goodix-chicago-match.c	2026-09-28 21:48:45.222955291 +0300
++++ b/goodix-chicago-match.c	2026-09-28 21:48:45.224160411 +0300
 @@ -6,6 +6,7 @@
  #include "goodix-chicago-match.h"
  
@@ -8,7 +8,7 @@
  
  G_STATIC_ASSERT (sizeof (GoodixChicagoMatchScoreConfig) == 0x58);
  G_STATIC_ASSERT (sizeof (GoodixChicagoMatchFeatureOverlap) == 0x2c);
-@@ -1427,6 +1428,555 @@
+@@ -1427,6 +1428,540 @@
      }
  }
  
@@ -435,21 +435,6 @@
 +      match_cross_class_candidates_type24 (gallery->records, probe->records,
 +                                           distance_matrix, direction_matrix,
 +                                           g2, ng2, p1, np1, set2);
-+      if (getenv ("P2DBG"))   /* P2DBG-TEMP */
-+        {
-+          fprintf (stderr, " gcls ");
-+          for (guint k = 0; k < 70 && k < gallery_count; k++) fprintf (stderr, "%d", match_record_class (&gallery->records[k]));
-+          fprintf (stderr, " act=%u\n pcls ", gallery->active_count);
-+          for (guint k = 0; k < 80 && k < probe->record_count; k++) fprintf (stderr, "%d", match_record_class (&probe->records[k]));
-+          fprintf (stderr, " act=%u\n", probe->active_count);
-+          fprintf (stderr, " cls g1=%u g2=%u p1=%u p2=%u\n set1 d:", ng1, ng2, np1, np2);
-+          for (guint k = 0; k < gallery_count; k++)
-+            fprintf (stderr, "%d %d ", candidates[k].best_distance, candidates[k].second_distance);
-+          fprintf (stderr, "\n set2 d:");
-+          for (guint k = 0; k < gallery_count; k++)
-+            fprintf (stderr, "%d %d ", set2[k].best_distance, set2[k].second_distance);
-+          fprintf (stderr, "\n");
-+        }
 +      goodix_chicago_match_select_candidates (
 +        probe->records, candidates, gallery_count,
 +        GOODIX_CHICAGO_MATCH_PAIR_LIMIT, 40, 38, pairs);
@@ -564,7 +549,7 @@
  void
  goodix_chicago_match_score_subtemplate_type24 (
    const GoodixChicagoSubtemplateView *gallery,
-@@ -1436,8 +1986,16 @@
+@@ -1436,8 +1971,16 @@
  {
    GoodixChicagoMatchPair pairs[GOODIX_CHICAGO_MATCH_PAIR_LIMIT];
    GoodixChicagoMatchFeatureOverlap overlap;
@@ -583,7 +568,7 @@
  
    g_return_if_fail (gallery != NULL);
    g_return_if_fail (probe != NULL);
-@@ -1448,41 +2006,139 @@
+@@ -1448,41 +1991,139 @@
    record->probe_coverage = probe->coverage;
    record->gallery_quality = gallery->quality;
    record->gallery_coverage = gallery->coverage;
@@ -746,7 +731,7 @@
  void
  goodix_chicago_match_invert_transform_q8_type24 (
    const gint32 transform[6],
-@@ -1871,6 +2527,2257 @@
+@@ -1871,6 +2512,2334 @@
      *status = 0;
  }
  
@@ -3001,10 +2986,87 @@
 +  fprintf (stderr, "\n");
 +}
 +
++/* MFIXES: AlgoChicago 0x180026f40 for type 24 (params+0x40 = 1).  Over the records
++ * enabled at 0x180029ef6, in template order: the fallback correspondences
++ * (0x180057690), geometry 0x18001f2f0 with > 5 pairs and >= 4 inliers; with > 4
++ * inliers the record counts as evaluated and gets the full metric 0x180050730
++ * (inlier-gated selector); it is admitted with selector > threshold and
++ * agreement > 195, and its agreement is then penalised by 4 per scale/shear flag.
++ * The best admitted record (agreement, inliers, coverage; first wins ties) would be
++ * re-checked by 0x180027fb0, but its geometry percent (+0x2c) is never set here, so
++ * the check returns 0 and the result is always the negative reason code:
++ * (inlier sum < 6) << 2 | (evaluated && max admitted agreement < 208) << 1 |
++ * (evaluated && best coverage < 128).  0x18002bc90 (transform admissibility for
++ * probe resolution classes 1..5) is not ported: it never rejects on the dataset. */
++static gint32
++match_fallback_type24 (const GoodixChicagoEnrollment      *gallery_template,
++                       guint                               gallery_count,
++                       const GoodixChicagoSubtemplateView *probe,
++                       const gboolean                     *enabled,
++                       gint32                              selector_threshold)
++{
++  gboolean evaluated = FALSE;
++  gint32 admitted = 0, inlier_sum = 0, max_agreement = 0;
++  gint32 best_agreement = 0, best_inliers = 0, best_coverage = 0;
++
++  for (guint index = 0; index < gallery_count; index++)
++    {
++      GoodixChicagoSubtemplateView gallery;
++      GoodixChicagoMatchPair pairs[GOODIX_CHICAGO_MATCH_PAIR_LIMIT];
++      GoodixChicagoMatchGeometry geometry;
++      gint32 selector, agreement, coverage, flag_a, flag_b, flag_c, angle;
++      guint valid = 0;
++      gint32 inliers;
++
++      if (!enabled[index] ||
++          !goodix_chicago_enrollment_get_subtemplate (gallery_template, index, &gallery))
++        continue;
++      goodix_chicago_match_fallback_correspondences (
++        gallery.records, gallery.record_count, gallery.active_count,
++        probe->records, probe->record_count, probe->active_count, pairs);
++      for (guint k = 0; k < GOODIX_CHICAGO_MATCH_PAIR_LIMIT; k++)
++        valid += pairs[k].old_index >= 0 && pairs[k].new_index >= 0 &&
++                 (guint) pairs[k].old_index < gallery.record_count &&
++                 (guint) pairs[k].new_index < probe->record_count;
++      if (valid <= 5)
++        continue;
++      goodix_chicago_match_geometry_consensus_records (
++        gallery.records, gallery.record_count, probe->records, probe->record_count,
++        pairs, GOODIX_CHICAGO_MATCH_PAIR_LIMIT, 4, &geometry);
++      inliers = geometry.inlier_count;
++      if (inliers <= 4 || !gallery.has_metric_data || !probe->has_metric_data)
++        continue;
++      evaluated = TRUE;
++      match_record_metrics_type24 (&gallery, probe, geometry.transform, inliers,
++                                   &selector, &agreement, &coverage,
++                                   &flag_a, &flag_b, &flag_c, &angle);
++      MTRACE (" fb idx=%u inl=%d sel=%d agr=%d cov=%d\n", index, inliers, selector,
++              agreement, coverage);
++      if (selector <= selector_threshold || agreement <= 195)
++        continue;
++      agreement -= 4 * (flag_a + flag_b);
++      if (agreement > best_agreement ||
++          (agreement == best_agreement &&
++           (inliers > best_inliers ||
++            (inliers == best_inliers && coverage > best_coverage))))
++        {
++          best_agreement = agreement;
++          best_inliers = inliers;
++          best_coverage = coverage;
++        }
++      admitted++;
++      inlier_sum += inliers;
++      max_agreement = MAX (max_agreement, agreement);
++    }
++  return -(((inlier_sum < 6) << 2) |
++           ((evaluated && max_agreement < 208) << 1) |
++           (evaluated && best_coverage < 128));
++}
++
  void
  goodix_chicago_match_template_type24 (
    const GoodixChicagoEnrollment      *gallery_template,
-@@ -1883,16 +4790,26 @@
+@@ -1883,16 +4852,27 @@
    GoodixChicagoMatchGeometry geometries[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
    gint32 auxiliary_counts[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { 0, };
    gboolean auxiliary_counts_known[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { FALSE, };
@@ -3016,6 +3078,7 @@
 +  gboolean continue_after_match;
 +  gboolean any_status = FALSE;   /* ctx+0x684 */
 +  gboolean any_strong = FALSE;   /* ctx+0x688 */
++  gboolean group_hit = FALSE;    /* ctx+0x644: a status record of a grouped subtemplate */
 +  gint32 admitted_count = 0;
 +  gint32 admitted_q8_sum = 0;
 +  gint32 best_geometry = 0;      /* ctx+0x64c */
@@ -3032,7 +3095,7 @@
    *result = (GoodixChicagoMatchTemplateResult){
      .selected_index = -1,
    };
-@@ -1901,9 +4818,15 @@
+@@ -1901,9 +4881,15 @@
    result->study_relation_count = gallery_count;
    memset (records, 0, sizeof (records));
    memset (geometries, 0, sizeof (geometries));
@@ -3049,7 +3112,7 @@
    for (guint schedule_index = 0; schedule_index < gallery_count;
         schedule_index++)
      {
-@@ -1917,6 +4840,8 @@
+@@ -1917,6 +4903,8 @@
        gint32 count_mixed = 0;
        gint32 count_one = 0;
        gint32 aggregate_metric;
@@ -3058,10 +3121,15 @@
        guint index;
  
        if (!goodix_chicago_enrollment_get_match_order_index (
-@@ -1924,40 +4849,79 @@
+@@ -1924,40 +4912,84 @@
            !goodix_chicago_enrollment_get_subtemplate (
              gallery_template, index, &gallery))
          continue;
++      /* MFIXES 0x1800292a4: once a grouped subtemplate has given a status record, the
++       * other grouped ones are skipped (with a full template, or after a confident one). */
++      if ((gallery_count == GOODIX_CHICAGO_ENROLLMENT_CAPACITY || any_strong) &&
++          group_hit && gallery.group_state == 1)
++        continue;
 +      was_raised = scheduler_auxiliary.raised;
        combined_auxiliary =
          goodix_chicago_match_scheduler_auxiliary_consume_type24 (
@@ -3158,7 +3226,7 @@
        if (candidate_metric >= 3)
          goodix_chicago_enrollment_calculate_live_auxiliary_counts_type24 (
            probe->live_auxiliary.values, geometries[index].transform,
-@@ -1975,32 +4939,79 @@
+@@ -1975,55 +5007,94 @@
        goodix_chicago_match_filter_study_admission_type24 (
          &records[index], &study_input, &status_flag, &study_eligible);
        study_eligible_any |= study_eligible != 0;
@@ -3206,6 +3274,7 @@
 +        }
 +      any_status |= status_flag != 0;
 +      any_strong |= study_eligible != 0;
++      group_hit |= status_flag != 0 && gallery.group_state != 0;   /* 0x180029dfd */
 +      if (status_flag == 0)
 +        {
 +          if (!any_status && records[index].secondary_geometry_count >= 3)
@@ -3226,13 +3295,6 @@
 -      break;
 -    }
 -  if (aggregation.accepted_count > 0)
--    {
--      result->score =
--        goodix_chicago_match_aggregation_score (&aggregation);
--      result->selected_index_known = result->selected_index >= 0;
--      result->study_eligible = study_eligible_any;
--      result->study_eligibility_known = TRUE;
--      return;
 +      result->score = ((admitted_q8_sum * 100) / admitted_count) >> 8;
 +      if (!continue_after_match)
 +        break;
@@ -3253,32 +3315,44 @@
 +      result->score = ((admitted_q8_sum * 100) / admitted_count) >> 8;
 +      MTRACE (" best27fb0 ratio=%d\n", result->score);
 +      goto done;
-     }
- 
-   for (guint schedule_index = 0; schedule_index < gallery_count;
-@@ -2013,9 +5024,7 @@
-             gallery_template, schedule_index, &index) ||
-           !goodix_chicago_enrollment_get_subtemplate (
-             gallery_template, index, &gallery) ||
--          late_rejected[index] ||
--          !goodix_chicago_match_fallback_gallery_enabled_type24 (
--            records[index].geometry_count, 0, 1))
-+          !fallback_enabled[index])
-         continue;
-       goodix_chicago_match_aggregation_consume_fallback_records_type24 (
-         &aggregation, gallery.records, gallery.record_count,
-@@ -2024,6 +5033,15 @@
-         probe->metric_data, selector_threshold, NULL);
-     }
-   result->score = goodix_chicago_match_aggregation_score (&aggregation);
++    }
++
++  /* MFIXES: the fallback 0x180026f40 (was an approximation over the schedule order). */
++  result->score = match_fallback_type24 (gallery_template, gallery_count, probe,
++                                         fallback_enabled, selector_threshold);
 +  MTRACE (" fallback ratio=%d\n", result->score);
 +done:
 +  if (result->score > 0)
-+    {
-+      result->selected_index_known = result->selected_index >= 0;
-+      result->study_eligible = study_eligible_any;
-+      result->study_eligibility_known = TRUE;
-+    }
+     {
+-      result->score =
+-        goodix_chicago_match_aggregation_score (&aggregation);
+       result->selected_index_known = result->selected_index >= 0;
+       result->study_eligible = study_eligible_any;
+       result->study_eligibility_known = TRUE;
+-      return;
+-    }
+-
+-  for (guint schedule_index = 0; schedule_index < gallery_count;
+-       schedule_index++)
+-    {
+-      GoodixChicagoSubtemplateView gallery;
+-      guint index;
+-
+-      if (!goodix_chicago_enrollment_get_match_order_index (
+-            gallery_template, schedule_index, &index) ||
+-          !goodix_chicago_enrollment_get_subtemplate (
+-            gallery_template, index, &gallery) ||
+-          late_rejected[index] ||
+-          !goodix_chicago_match_fallback_gallery_enabled_type24 (
+-            records[index].geometry_count, 0, 1))
+-        continue;
+-      goodix_chicago_match_aggregation_consume_fallback_records_type24 (
+-        &aggregation, gallery.records, gallery.record_count,
+-        gallery.active_count, gallery.metric_data,
+-        probe->records, probe->record_count, probe->active_count,
+-        probe->metric_data, selector_threshold, NULL);
+     }
+-  result->score = goodix_chicago_match_aggregation_score (&aggregation);
 +  MTRACE (" RATIO %d\n", result->score);
  }
  
