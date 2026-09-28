@@ -15,7 +15,9 @@
 // Usage: ./algo_eval4 [enroll_n=15]
 //   env ALGO=chicago|milan (default chicago), PPP=<profile> (default 12 / 10),
 //       ALGOLOG=1 (vendor log to stderr), VERBOSE=1 (per-probe lines),
-//       STUDY=1 (adaptive update: templateStudy + repack after each genuine match),
+//       STUDY=1 (adaptive update: templateStudy + repack after each genuine match; the gallery
+//       accumulates over the probes in record order, impostors are matched without study;
+//       STRACE=<file>, STUDY_DIR=<dir>: blob after every study, docs/stage7-study.md),
 //       DUMP_PROC=<file> (every preprocessor output; also <file>.cbuf with cbuf[0..15]),
 //       TPL_OUT=<file> (packed gallery, cmp_tpl.py), ETRACE=<file> (template T after every
 //       enrolAddImage: sub count, group_state, relation table; docs/stage4-enroll.md).
@@ -200,6 +202,24 @@ static uint8_t *enroll(const int *recs, int n, int *len, int *added, int *entrie
 }
 
 
+// stage 7 (docs/stage7-study.md): STRACE=<file> gets one line per templateStudy call
+// ("study rec score upd rc len fnv"), STUDY_DIR=<dir> the packed gallery after it (<dir>/s<rec>.tpl).
+static void study_trace(int r, int score, int upd, int rc, const uint8_t *b, int n) {
+  static FILE *st;
+  uint32_t h = 2166136261u;
+  for (int k = 0; k < n; k++) h = (h ^ b[k]) * 16777619u;
+  if (getenv("STRACE")) {
+    if (!st) st = fopen(getenv("STRACE"), "w");
+    if (st) { fprintf(st, "study rec %d score %d upd %d rc %d len %d fnv %08x\n", r, score, upd, rc, n, h); fflush(st); }
+  }
+  if (getenv("STUDY_DIR")) {
+    char path[512];
+    snprintf(path, sizeof path, "%s/s%03d.tpl", getenv("STUDY_DIR"), r);
+    FILE *f = fopen(path, "wb");
+    if (f) { fwrite(b, 1, n, f); fclose(f); }
+  }
+}
+
 // verify record r against the packed gallery; returns 1 match / 0 no / -1 error.
 // With study != 0 a matched gallery is updated (templateStudy) and repacked in place.
 static int verify(uint8_t **blob, int *len, int r, int *score, int study) {
@@ -214,15 +234,16 @@ static int verify(uint8_t **blob, int *len, int r, int *score, int study) {
                &idx, score, cq, 0, opt("BYTE0") ? 0 : 1, raw + (size_t)r * PX, 0);
   last_idx = idx; last_rc = rc;
   int match = rc == 0 && idx >= 0 && *score > 0;
-  if (match && study) {
+  if (match && study) {   // EngineAdapter 0x180042d50: score > 0 -> templateStudy(&update)
     int upd = 0;
-    tstudy(&upd);
-    if (upd > 0) {
+    int src = tstudy(&upd);
+    if (upd > 0) {          // update > 0 -> repack (update >= 2: identifyUpdate is a stub)
       int nl = tsize(h);
       uint8_t *nb = nl > 0 ? malloc(nl) : NULL;
       if (nb && tpack(h, nb) == 0) { free(*blob); *blob = nb; *len = nl; }
       else free(nb);
     }
+    study_trace(r, *score, upd, src, *blob, *len);
   }
   if (!opt("NOUNPACK")) tdel(h);
   return rc ? -1 : match;

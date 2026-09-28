@@ -37,6 +37,8 @@
 //                            block format of oracle_feat.c (compare with cmp_feat.py)
 //       TPL_OUT=<file>       the packed gallery (DLL-compatible TLV, compare with cmp_tpl.py)
 //       ETRACE=<file>        gallery state after every insertion (text, as algo_eval4 ETRACE)
+//       STUDY=1              templateStudy after every genuine match, gallery accumulates (stage 7);
+//                            STRACE=<file>, STUDY_DIR=<dir> as in algo_eval4 (docs/stage7-study.md)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -314,6 +316,39 @@ hexval (int ch)
   return g_ascii_xdigit_value (ch);
 }
 
+
+/* stage 7 (docs/stage7-study.md): same STRACE/STUDY_DIR output as algo_eval4 study_trace();
+ * upd is 1 when the port produced an updated gallery, 0 otherwise. */
+static void
+study_trace (int r, int score, int upd, GVariant *print_data, const guint8 *sensor_id, GBytes *cal)
+{
+  static FILE *st;
+  g_autoptr(GBytes) packed = NULL;
+  const guint8 *b = NULL;
+  gsize n = 0;
+  guint32 h = 2166136261u;
+
+  if (goodix_chicago_print_data_parse (print_data, sensor_id, cal, &packed, NULL))
+    b = g_bytes_get_data (packed, &n);
+  for (gsize k = 0; k < n; k++)
+    h = (h ^ b[k]) * 16777619u;
+  if (getenv ("STRACE"))
+    {
+      if (!st)
+        st = fopen (getenv ("STRACE"), "w");
+      if (st)
+        {
+          fprintf (st, "study rec %d score %d upd %d rc 0 len %zu fnv %08x\n", r, score, upd, n, h);
+          fflush (st);
+        }
+    }
+  if (getenv ("STUDY_DIR") && b)
+    {
+      g_autofree gchar *path = g_strdup_printf ("%s/s%03d.tpl", getenv ("STUDY_DIR"), r);
+      g_file_set_contents (path, (const gchar *) b, n, NULL);
+    }
+}
+
 int
 main (int argc, char **argv)
 {
@@ -513,7 +548,8 @@ main (int argc, char **argv)
           gal_end, ne, added, goodix_chicago_enrollment_get_count (acc),
           driver_policy ? (tips ? " (policy tips seen)" : "") : "", g_bytes_get_size (packed));
 
-  // probes
+  // probes (STUDY=1: the gallery accumulates templateStudy updates, as algo_eval4 STUDY=1)
+  int study = getenv ("STUDY") != NULL;
   const char *grp[3] = { "natural", "genuine", "impostor" };
   int tot[3] = { 0 }, hit[3] = { 0 }, hitd[3] = { 0 }, bad[3] = { 0 };
   int is_gal[MAXREC] = { 0 };
@@ -544,6 +580,20 @@ main (int argc, char **argv)
         }
       int match = res.score > 0;
       int match_idx = res.score > 0 && res.selected_index >= 0;
+      if (study && match && g < 2)   /* stage 7: EngineAdapter score > 0 -> templateStudy */
+        {
+          g_autoptr(GVariant) updated = NULL;
+          g_autoptr(GError) serr = NULL;
+          if (!goodix_chicago_runtime_study_print_data (probes[i], print_data, sensor_id, cal, &res,
+                                                        &updated, &serr))
+            printf ("study error rec %d: %s\n", i, serr->message);
+          if (updated)
+            {
+              g_variant_unref (print_data);
+              print_data = g_variant_ref (updated);
+            }
+          study_trace (i, res.score, updated != NULL, print_data, sensor_id, cal);
+        }
       tot[g]++;
       hit[g] += match;
       hitd[g] += match_idx;

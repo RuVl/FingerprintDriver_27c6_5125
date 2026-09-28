@@ -1,0 +1,457 @@
+diff -ru a/goodix-chicago-enrollment.c b/goodix-chicago-enrollment.c
+--- a/goodix-chicago-enrollment.c	2026-09-28 22:05:51.871841026 +0300
++++ b/goodix-chicago-enrollment.c	2026-09-29 00:35:33.644945518 +0300
+@@ -1957,7 +1957,8 @@
+ 
+   g_return_val_if_fail (self != NULL, FALSE);
+   g_return_val_if_fail (probe_relations != NULL, FALSE);
+-  if (count != self->capacity ||
++  /* SFIXES: 0x18005c140 mode 1 (study append) runs this below capacity as well. */
++  if (count > self->capacity ||
+       count > GOODIX_CHICAGO_ENROLLMENT_CAPACITY ||
+       relation_count != count)
+     return FALSE;
+@@ -2072,7 +2073,9 @@
+   [GOODIX_CHICAGO_ENROLLMENT_CAPACITY + 1] = { { 0, }, };
+ 
+   g_return_val_if_fail (self != NULL, FALSE);
+-  if (count != self->capacity ||
++  /* SFIXES: the gallery-only closure (probe_relations NULL) also runs below capacity:
++   * after every study append (0x18005e200) and after unpack (0x180032eb1). */
++  if ((probe_relations != NULL && count != self->capacity) ||
+       count > GOODIX_CHICAGO_ENROLLMENT_CAPACITY ||
+       relation_count != count)
+     return FALSE;
+@@ -2875,7 +2878,8 @@
+   component = g_new (gint, count);
+   component_size = g_new0 (guint, count);
+   stack = g_new (guint, count);
+-  self->matcher_value_c = 0;
++  /* SFIXES: 0x18005cf70 resets T+0x87ec/T+0x87e0 and group_state only; +0xa7 (T+0x8d04) is
++   * the study append counter, not a group flag. */
+   self->has_group_anchor = FALSE;
+   for (guint index = 0; index < count; index++)
+     {
+@@ -2927,7 +2931,6 @@
+   if (best_size <= 1)
+     return;
+ 
+-  self->matcher_value_c = 1;
+   self->group_anchor = best_root;
+   self->has_group_anchor = TRUE;
+   for (guint index = 0; index < count; index++)
+@@ -2936,6 +2939,19 @@
+        g_ptr_array_index (self->subtemplates, index))->group_state = 1;
+ }
+ 
++/* SFIXES: identify's +0x124 counter increments (0x180029eaf/0x18002a3fd), applied to the
++ * gallery that templateStudy updates and EngineAdapter repacks. */
++void
++goodix_chicago_enrollment_apply_study_hits (GoodixChicagoEnrollment *self,
++                                            const guint32           *hits,
++                                            guint                    count)
++{
++  g_return_if_fail (self != NULL);
++  for (guint index = 0; index < count && index < self->subtemplates->len; index++)
++    ((GoodixChicagoSubtemplate *) g_ptr_array_index (self->subtemplates, index))->study_value_a +=
++      hits[index];
++}
++
+ gboolean
+ goodix_chicago_enrollment_append_study (
+   GoodixChicagoEnrollment            *self,
+@@ -2944,6 +2960,7 @@
+   const GoodixChicagoRelation        *relations,
+   guint                               relation_count,
+   guint                              *appended_index,
++  GoodixChicagoCapacityRelationBuilder build_unresolved_relation,
+   GError                            **error)
+ {
+   GoodixChicagoSubtemplate *source;
+@@ -2971,8 +2988,32 @@
+       return FALSE;
+     }
+ 
++  /* SFIXES 0x18005e0d0 -> 0x18005c140 mode 1: the new slot keeps identify's relations with
++   * inlier >= 1 (others: -1, identity, 0x1800796a0), then the relations of the new node are
++   * propagated through the gallery graph (strength-2 synthetic, no group change) and slots
++   * neither reached nor marked -2 by identify (0x180029442) are rematched from features
++   * (0x180059030/0x180058170/0x180050730). */
++  GoodixChicagoRelation fresh[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
++  gboolean visited[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
++
++  for (guint index = 0; index < relation_count; index++)
++    if (relations[index].inlier_count >= 1)
++      fresh[index] = relations[index];
++    else
++      fresh[index] = (GoodixChicagoRelation){ .inlier_count = -1,
++                                              .transform = { 256, 0, 0, 0, 256, 0 } };
++  propagate_capacity_relations (self, fresh, relation_count, visited);
++  for (guint index = 0; index < relation_count; index++)
++    if (!visited[index] && relations[index].inlier_count != -2 && build_unresolved_relation)
++      {
++        GoodixChicagoSubtemplateView gallery;
++
++        if (goodix_chicago_enrollment_get_subtemplate (self, index, &gallery))
++          build_unresolved_relation (&gallery, probe, &fresh[index]);
++      }
+   source = g_ptr_array_index (self->subtemplates, selected_index);
+-  source->study_value_a++;
++  /* SFIXES: 0x18005e0d0 copies +0x124/+0x128 of the source; the +0x124 increments are
++   * identify's (goodix_chicago_enrollment_apply_study_hits). */
+   appended = g_new0 (GoodixChicagoSubtemplate, 1);
+   appended->record_count = probe->record_count;
+   appended->active_count = probe->active_count;
+@@ -2989,10 +3030,16 @@
+   appended->study_value_a = source->study_value_a;
+   appended->study_value_b = source->study_value_b;
+   g_ptr_array_add (self->subtemplates, appended);
+-  g_array_append_vals (self->relations, relations, relation_count);
++  g_array_append_vals (self->relations, fresh, relation_count);
+   self->transform_count = self->relations->len;
+   self->match_order[old_count] = old_count;
+-  rebuild_matcher_group (self);
++  self->matcher_value_c++;                          /* SFIXES: 0x18005e1ca T+0x8d04 */
++  /* SFIXES: gallery-only relation closure 0x18005b9f0(T, 0) with group propagation. */
++  goodix_chicago_enrollment_synthesize_capacity_relations (self, NULL, self->subtemplates->len);
++  /* SFIXES 0x18005d4b8: groups are rebuilt (0x18005cf70) only without a group (T+0x87ec 0)
++   * or when the changed slot is the anchor T+0x87e0 (never for an appended one). */
++  if (!self->has_group_anchor || self->group_anchor == old_count)
++    rebuild_matcher_group (self);
+   if (appended_index != NULL)
+     *appended_index = old_count;
+   return TRUE;
+@@ -3037,7 +3084,8 @@
+   /* identify's retained source counter is advanced before +0x5d550.  Native
+    * identify is side-effect free, so apply that transition at this boundary,
+    * as append_study() does for the under-capacity path. */
+-  source->study_value_a++;
++  /* SFIXES: no increment here, as in the append path (identify's +0x124 hits are applied by
++   * goodix_chicago_enrollment_apply_study_hits); the capacity path is not reached on the dataset. */
+   study_value_a = source->study_value_a;
+   study_value_b = source->study_value_b;
+   /* +0x30860 clears BC while copying the probe into an existing slot.  The
+@@ -3913,6 +3961,9 @@
+                              &self->matcher_value_d) ||
+       matcher_state.offset != matcher_state.size)
+     goto invalid;
++  /* SFIXES: templateUnPack (0x180032eb1) runs the gallery-only closure 0x18005b9f0(T, 0) for
++   * type 24: synthetic strength-2 relations and group propagation in the live template. */
++  goodix_chicago_enrollment_synthesize_capacity_relations (self, NULL, self->subtemplates->len);
+   return self;
+ 
+ invalid:
+diff -ru a/goodix-chicago-enrollment.h b/goodix-chicago-enrollment.h
+--- a/goodix-chicago-enrollment.h	2026-09-28 22:05:51.872073267 +0300
++++ b/goodix-chicago-enrollment.h	2026-09-29 00:35:33.645244855 +0300
+@@ -246,12 +246,17 @@
+ /* Exact under-capacity templateStudy append at AlgoChicago+0x5ea80.  The
+  * relation array is the per-gallery state retained by identify and maps the
+  * live probe into each existing subtemplate. */
++void goodix_chicago_enrollment_apply_study_hits (GoodixChicagoEnrollment *self,
++                                                 const guint32           *hits,
++                                                 guint                    count);
++
+ gboolean goodix_chicago_enrollment_append_study (GoodixChicagoEnrollment            *self,
+                                                  const GoodixChicagoSubtemplateView *probe,
+                                                  guint                               selected_index,
+                                                  const GoodixChicagoRelation        *relations,
+                                                  guint                               relation_count,
+                                                  guint                              *appended_index,
++                                                 GoodixChicagoCapacityRelationBuilder build_unresolved_relation,
+                                                  GError                            **error);
+ 
+ /* Exact mutation half of the capacity-full AlgoChicago+0x5d550 path.  The
+diff -ru a/goodix-chicago-match.c b/goodix-chicago-match.c
+--- a/goodix-chicago-match.c	2026-09-28 22:05:51.871477475 +0300
++++ b/goodix-chicago-match.c	2026-09-29 00:35:33.645324626 +0300
+@@ -4840,6 +4840,184 @@
+            (evaluated && best_coverage < 128));
+ }
+ 
++
++/* SFIXES: first evidence of the type-24 scheduler, AlgoChicago 0x180026ce0 (params +0/+4 = 0,
++ * +0x3c = 24).  Its status/conf only decide whether the transform refinement 0x180052d20 runs. */
++static void
++match_first_evidence_type24 (const GoodixChicagoMatchScoreRecord *rec,
++                             gint32 quality, gint32 coverage, gint32 *conf, gint32 *status)
++{
++  static const gint32 t1[22] = { 0x0fffffff, 0x0fffffff, 0x0fffffff, 226, 224, 224, 221, 215, 212, 208, 204,
++                                 200, 195, 190, 190, 190, 180, 180, 180, 180, 180, 180 };
++  static const gint32 t2[22] = { 0x0fffffff, 0x0fffffff, 0x0fffffff, 0x0fffffff, 0x0fffffff, 226, 222, 215,
++                                 213, 210, 205, 203, 200, 198, 197, 195, 193, 191, 184, 182, 182, 181 };
++  const gint32 b = rec->normalized_coverage;
++  const gint32 c = rec->matched_percent;
++  gint32 g0 = rec->geometry_count, g1 = rec->secondary_geometry_count;
++  gint32 e = rec->agreement, r = rec->agreement, i0, i1, st, cf;
++
++  if (b >= 80 && c >= 70 && g0 > 4)
++    {
++      g0 += 1 + (c - 70) / 5;
++      g1 += 1 + (c - 70) / 5;
++    }
++  if (g1 <= 11)
++    e = r = rec->agreement - 4 * (rec->penalty_flag_a + rec->penalty_flag_b + rec->reserved38[0]);
++  if (b > 100)
++    r += 2 * ((b - 100) / 30) + 2;
++  i0 = CLAMP (g0, 0, 21);
++  i1 = CLAMP (g1, 0, 21);
++  st = b >= 25 && (r > t1[i0] || r > t1[i1] + 10 || g0 >= 14);
++  cf = st && quality > 15 && coverage >= 65 && b >= 40 && (e > t2[i0] || e > t2[i1] + 10);
++  if (cf == 1 && rec->geometry_count > 7 && rec->secondary_geometry_count > 11 &&
++      rec->geometry_percent > 37 && b > 95)
++    cf = 2;
++  *status = st;
++  *conf = cf;
++}
++
++/* SFIXES 0x180053050: index map of the probe records (radius 2, later records win). */
++static void
++match_render_record_map (gint16 *map, const GoodixChicagoFeatureRecord *recs, guint count)
++{
++  const gint w = GOODIX_CHICAGO_FEATURE_WIDTH, h = GOODIX_CHICAGO_FEATURE_HEIGHT, rad = 2;
++
++  for (gint k = 0; k < w * h; k++)
++    map[k] = -1;
++  for (guint k = 0; k < count; k++)
++    {
++      const gint x = ((gint) (guint16) recs[k].refined_x + 128) >> 8;
++      const gint y = ((gint) (guint16) recs[k].refined_y + 128) >> 8;
++      const gint x0 = MAX (x - rad, 0), x1 = MIN (x + rad, w - 1);
++      const gint y0 = MAX (y - rad, 0), y1 = MIN (y + rad, h - 1);
++
++      for (gint yy = y0; yy <= y1; yy++)
++        for (gint xx = x0; xx <= x1; xx++)
++          map[yy * w + xx] = (gint16) k;
++    }
++}
++
++/* SFIXES 0x180052450: gallery records mapped into the probe by the inverse transform; a hit
++ * in the probe map gives the pair {gallery, probe}. */
++static guint
++match_map_pairs (const GoodixChicagoFeatureRecord *recs, guint count, const gint32 transform[6],
++                 const gint16 *map, gint32 (*pairs)[2])
++{
++  const gint w = GOODIX_CHICAGO_FEATURE_WIDTH, h = GOODIX_CHICAGO_FEATURE_HEIGHT;
++  gint32 t[6];
++  guint n = 0;
++
++  goodix_chicago_match_invert_transform_q8_type24 (transform, t);
++  for (guint k = 0; k < count; k++)
++    {
++      const gint64 x = (guint16) recs[k].refined_x, y = (guint16) recs[k].refined_y;
++      const gint32 X = (gint32) (t[2] + 128 + (gint32) (((gint64) t[0] * x + 128 + (gint64) t[1] * y) >> 8)) >> 8;
++      gint32 Y;
++
++      if (X < 0 || X >= w)
++        continue;
++      Y = (gint32) (t[5] + 128 + (gint32) (((gint64) t[3] * x + 128 + (gint64) t[4] * y) >> 8)) >> 8;
++      if (Y < 0 || Y >= h || map[Y * w + X] < 0)
++        continue;
++      pairs[n][0] = k;
++      pairs[n][1] = map[Y * w + X];
++      n++;
++    }
++  return n;
++}
++
++/* SFIXES 0x180052960: similarity transform (probe -> gallery) fitted to the pairs, Q8. */
++static void
++match_fit_similarity (const GoodixChicagoFeatureRecord *grecs, const GoodixChicagoFeatureRecord *precs,
++                      gint32 (*pairs)[2], gint64 n, gint32 out[6])
++{
++  gint32 spx = 0, spy = 0, sgx = 0, sgy = 0;
++  gint64 spp = 0, s1 = 0, s2 = 0, mxp, myp, mxg, myg, r10, d, inv, r11, a, b;
++
++  for (gint64 i = 0; i < n; i++)
++    {
++      const gint64 px = (guint16) precs[pairs[i][1]].refined_x, py = (guint16) precs[pairs[i][1]].refined_y;
++      const gint64 gx = (guint16) grecs[pairs[i][0]].refined_x, gy = (guint16) grecs[pairs[i][0]].refined_y;
++
++      spx += (gint32) px; spy += (gint32) py; sgx += (gint32) gx; sgy += (gint32) gy;
++      spp += px * px + py * py;
++      s1 += gx * px + gy * py;
++      s2 += gy * px - gx * py;
++    }
++  mxp = (gint64) (gint32) (spx + 0x80) >> 8;
++  myp = (gint64) (gint32) (spy + 0x80) >> 8;
++  mxg = (gint64) (gint32) (sgx + 0x80) >> 8;
++  myg = (gint64) (gint32) (sgy + 0x80) >> 8;
++  s2 = (s2 + 0x8000) >> 16;
++  spp = (spp + 0x8000) >> 16;
++  s1 = (s1 + 0x8000) >> 16;
++  r10 = myp * myp + mxp * mxp;
++  d = spp * n - r10;
++  if (d == 0)
++    return;
++  inv = ((d >> 1) + 0x800000000LL) / d;
++  r11 = (inv * r10 + 0x800000000LL) / n;
++  a = (inv * (n * s1 - myg * myp - mxg * mxp)) >> 27;
++  b = (inv * (n * s2 - myg * mxp + mxg * myp)) >> 27;
++  out[0] = out[4] = (gint32) a;
++  out[3] = (gint32) b;
++  out[1] = (gint32) -b;
++  out[2] = (gint32) ((-inv * mxp * s1 + inv * myp * s2 + r11 * mxg) >> 27);
++  out[5] = (gint32) ((-inv * mxp * s2 - inv * myp * s1 + r11 * myg) >> 27);
++}
++
++/* SFIXES 0x180052d20 (type 24) from the scheduler (0x1800297db): the pairs of the current
++ * transform within the class maps (0x1800526f0) give a refitted similarity; when its metrics
++ * (0x180050730) have a higher agreement, selector/agreement/coverage, the overlap percentages
++ * (0x18005a160) and the transform are replaced. */
++static void
++match_refine_transform_type24 (const GoodixChicagoSubtemplateView *gallery,
++                               const GoodixChicagoSubtemplateView *probe,
++                               GoodixChicagoMatchScoreRecord      *rec,
++                               gint32                              transform[6],
++                               gint16                            **maps)
++{
++  static gint32 pairs[512][2];
++  gint32 refined[6];
++  guint n1, n2;
++  gint32 sel, agr, cov, d0, d1, d2, d3;
++  GoodixChicagoMatchFeatureOverlap overlap;
++  const gsize px = GOODIX_CHICAGO_FEATURE_WIDTH * GOODIX_CHICAGO_FEATURE_HEIGHT;
++
++  if (*maps == NULL)
++    {
++      *maps = g_new (gint16, 2 * px);
++      match_render_record_map (*maps, probe->records, probe->active_count);
++      match_render_record_map (*maps + px, probe->records + probe->active_count,
++                               probe->record_count - probe->active_count);
++    }
++  n1 = match_map_pairs (gallery->records, gallery->active_count, transform, *maps, pairs);
++  n2 = match_map_pairs (gallery->records + gallery->active_count,
++                        gallery->record_count - gallery->active_count, transform, *maps + px, pairs + n1);
++  for (guint k = n1; k < n1 + n2; k++)
++    {
++      pairs[k][0] += gallery->active_count;
++      pairs[k][1] += probe->active_count;
++    }
++  memcpy (refined, transform, sizeof (refined));
++  if (n1 + n2 > 2)
++    match_fit_similarity (gallery->records, probe->records, pairs, n1 + n2, refined);
++  match_record_metrics_type24 (gallery, probe, refined, rec->secondary_geometry_count,
++                               &sel, &agr, &cov, &d0, &d1, &d2, &d3);
++  MTRACE ("  refine sel=%d agr=%d cov=%d (rec %d %d)\n", sel, agr, cov, rec->selector, rec->agreement);
++  if (sel == 0x80 || !(rec->selector == 0x80 || agr > rec->agreement))
++    return;
++  rec->selector = sel;
++  rec->agreement = agr;
++  rec->normalized_coverage = cov;
++  goodix_chicago_match_feature_overlap_type24 (
++    gallery->records, gallery->record_count, probe->records, probe->record_count, 80, 64,
++    refined, rec->secondary_geometry_count, &overlap);
++  rec->matched_percent = overlap.matched_percent;
++  rec->geometry_percent = overlap.geometry_percent;
++  memcpy (transform, refined, sizeof (refined));
++}
++
+ void
+ goodix_chicago_match_template_type24 (
+   const GoodixChicagoEnrollment      *gallery_template,
+@@ -4853,6 +5031,8 @@
+   gint32 auxiliary_counts[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { 0, };
+   gboolean auxiliary_counts_known[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { FALSE, };
+   gboolean fallback_enabled[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { FALSE, };
++  gboolean admitted[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { FALSE, };   /* SFIXES: rbp+0x330 */
++  g_autofree gint16 *refine_maps = NULL;   /* SFIXES: S+0x20/+0x28 of 0x180052d20 */
+   GoodixChicagoMatchSchedulerAuxiliary scheduler_auxiliary;
+   GoodixChicagoMatchScoreRecord best_record;
+   gboolean study_eligible_any = FALSE;
+@@ -4930,6 +5110,7 @@
+       auxiliary_counts_known[index] = TRUE;
+       goodix_chicago_match_score_subtemplate_type24 (
+         &gallery, probe, &records[index], &geometries[index]);
++      result->study_relations[index].inlier_count = -2;   /* SFIXES: 0x180029442 */
+       MTRACE (" R idx=%u g=%d aux=%d comb=%d\n", index, records[index].geometry_count,
+               scheduler_auxiliary.auxiliary_count, combined_auxiliary);
+       /* 0x180029449: fewer than five inliers or matched_percent < 30 skip
+@@ -4956,6 +5137,17 @@
+           MTRACE ("  prefilter 1\n");
+           continue;
+         }
++      {
++        /* SFIXES 0x1800296db..0x1800297db: first evidence 0x180026ce0; selector < 207 or
++         * status 0 or conf 0 -> transform refinement 0x180052d20 (params+0x50 = 0). */
++        gint32 first_conf, first_status;
++
++        match_first_evidence_type24 (&records[index], probe->quality, probe->coverage,
++                                     &first_conf, &first_status);
++        if (records[index].selector < 207 || first_status == 0 || first_conf == 0)
++          match_refine_transform_type24 (&gallery, probe, &records[index],
++                                         geometries[index].transform, &refine_maps);
++      }
+       goodix_chicago_match_scheduler_evidence_type24 (
+         &records[index], probe->quality, probe->coverage, TRUE, &evidence);
+       status_flag = evidence.status;
+@@ -5025,6 +5217,7 @@
+           gboolean replace;
+ 
+           MTRACE ("  ACCEPT\n");
++          admitted[index] = TRUE;                   /* SFIXES: 0x180029c37 */
+           admitted_count++;
+           admitted_q8_sum += match_divide_nearest (
+             records[index].secondary_geometry_count * 256, 31);
+@@ -5061,6 +5254,7 @@
+           result->study_auxiliary_count_known = auxiliary_counts_known[index];
+           result->study_candidate_metric = candidate_metric;
+         }
++      result->hit_increments[index]++;              /* SFIXES: 0x180029eaf */
+       result->score = ((admitted_q8_sum * 100) / admitted_count) >> 8;
+       if (!continue_after_match)
+         break;
+@@ -5078,6 +5272,9 @@
+       match_best_record_check_type24 (&best_record) > 0)
+     {
+       /* 0x18002a3d4: the average of all admitted records. */
++      for (guint index = 0; index < gallery_count; index++)
++        if (admitted[index])
++          result->hit_increments[index]++;          /* SFIXES: 0x18002a3fd */
+       result->score = ((admitted_q8_sum * 100) / admitted_count) >> 8;
+       MTRACE (" best27fb0 ratio=%d\n", result->score);
+       goto done;
+@@ -5091,7 +5288,9 @@
+   if (result->score > 0)
+     {
+       result->selected_index_known = result->selected_index >= 0;
+-      result->study_eligible = study_eligible_any;
++      /* SFIXES: templateStudy (0x1800305a0) tests ctx+0x688, which 0x180029fb1 clears when the
++       * loop stopped at the first match. */
++      result->study_eligible = any_strong;
+       result->study_eligibility_known = TRUE;
+     }
+   MTRACE (" RATIO %d\n", result->score);
+diff -ru a/goodix-chicago-match.h b/goodix-chicago-match.h
+--- a/goodix-chicago-match.h	2026-09-28 22:05:51.872025867 +0300
++++ b/goodix-chicago-match.h	2026-09-29 00:35:33.653549558 +0300
+@@ -175,6 +175,11 @@
+   guint    study_relation_count;
+   GoodixChicagoRelation
+            study_relations[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
++  /* SFIXES: identify's increments of the subtemplate counter +0x124 (tag 0xbe, study_value_a):
++   * 0x180029eaf for every record with a status, 0x18002a3fd for every admitted record on the
++   * best-record path.  The DLL mutates the live template; they persist only when templateStudy
++   * repacks it (EngineAdapter: update > 0). */
++  guint32  hit_increments[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
+ } GoodixChicagoMatchTemplateResult;
+ 
+ G_STATIC_ASSERT (sizeof (GoodixChicagoMatchScoreRecord) == 0x68);
+diff -ru a/goodix-chicago-runtime.c b/goodix-chicago-runtime.c
+--- a/goodix-chicago-runtime.c	2026-09-28 22:05:51.871993385 +0300
++++ b/goodix-chicago-runtime.c	2026-09-29 00:35:33.654654971 +0300
+@@ -241,12 +241,13 @@
+       return FALSE;
+     }
+ 
++  goodix_chicago_enrollment_apply_study_hits (gallery, result->hit_increments, count);
+   if (count < goodix_chicago_enrollment_get_capacity (gallery))
+     {
+       if (!goodix_chicago_enrollment_append_study (
+             gallery, &probe->view, (guint) result->selected_index,
+             result->study_relations, result->study_relation_count,
+-            NULL, error))
++            NULL, goodix_chicago_match_build_capacity_relation, error))
+         return FALSE;
+     }
+   else

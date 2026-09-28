@@ -15,6 +15,10 @@
 #   EFIXES=1 ./port_eval.sh ... same, with port_enroll_fixes.patch applied to a copy of
 #                               goodix-chicago-enrollment.c (gallery as in AlgoChicago.dll's
 #                               enrolAddImage, docs/stage4-enroll.md); combines with the others.
+#   SFIXES=1 EFIXES=1 MFIXES=1 FFIXES=1 ...  same, plus port_study_fixes.patch (templateStudy as in
+#                               AlgoChicago.dll, docs/stage7-study.md) applied on top of the patched
+#                               goodix-chicago-{match,enrollment,runtime}.c and their headers
+#                               (.port-sfixes/, first on the include path); use with STUDY=1.
 #   OPENPP=1 FFIXES=1 ...       preprocessor from openchicago/src (stage 1, bit-exact) instead of
 #                               the port's (FIXES is then ignored).
 # OTP: taken from the newest dumps/probe-*.json (not committed) unless OTP is already set.
@@ -50,6 +54,11 @@ fi
 if [ -n "$EFIXES" ]; then
   bin=${bin}_efixes
 fi
+if [ -n "$SFIXES" ]; then
+  [ -n "$EFIXES" ] && [ -n "$MFIXES" ] && [ -n "$FFIXES" ] ||
+    { echo "SFIXES=1 needs EFIXES=1 MFIXES=1 FFIXES=1" >&2; exit 2; }
+  bin=${bin}_sfixes
+fi
 if [ -n "$OPENPP" ]; then
   [ -n "$FFIXES" ] || { echo "OPENPP=1 needs FFIXES=1" >&2; exit 2; }
   bin=${bin}_openpp
@@ -78,6 +87,22 @@ if [ -n "$FFIXES" ]; then
   ffinc=-I$ffd
   ffdef="-DPORT_FFIXES -Wl,--wrap=goodix_chicago_preprocessor_finalize_metrics -Wl,--wrap=goodix_chicago_feature_preprocessor_context"
 fi
+if [ -n "$SFIXES" ]; then
+  sfd=$here/.port-sfixes
+  if [ ! -f "$sfd/.stamp" ] || [ "$here/port_study_fixes.patch" -nt "$sfd/.stamp" ] ||
+     [ "$mt" -nt "$sfd/.stamp" ] || [ "$en" -nt "$sfd/.stamp" ] || [ "$rt" -nt "$sfd/.stamp" ]; then
+    rm -rf "$sfd" && mkdir -p "$sfd"
+    cp "$mt" "$en" "$rt" "$src"/chicago/goodix-chicago-match.h "$src"/chicago/goodix-chicago-enrollment.h \
+      "$src"/chicago/goodix-chicago-runtime.h "$sfd/"
+    patch -s -d "$sfd" -p1 < "$here/port_study_fixes.patch"
+    touch "$sfd/.stamp"
+  fi
+  mt=$sfd/goodix-chicago-match.c
+  en=$sfd/goodix-chicago-enrollment.c
+  rt=$sfd/goodix-chicago-runtime.c
+  ffinc="-I$sfd $ffinc"
+  ffdef="$ffdef -DPORT_SFIXES"
+fi
 cal=$src/chicago/goodix-chicago-calibration.c
 chi=$src/chicago
 if [ -n "$OPENPP" ]; then
@@ -87,6 +112,7 @@ if [ -n "$OPENPP" ]; then
   cp "$src"/chicago/*.[ch] "$opd/"
   cp "$root"/openchicago/src/goodix-chicago-preprocess.[ch] "$root"/openchicago/src/goodix-chicago-calibration.[ch] "$opd/"
   cp "$ffd"/* "$mt" "$en" "$opd/"
+  [ -z "$SFIXES" ] || cp "$sfd"/*.[ch] "$opd/"
   chi=$opd
   pp=$opd/goodix-chicago-preprocess.c
   cal=$opd/goodix-chicago-calibration.c
