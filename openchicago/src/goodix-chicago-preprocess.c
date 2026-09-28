@@ -9,6 +9,8 @@
 #include <math.h>
 #include <string.h>
 
+#include <gio/gio.h>
+
 #include "goodix-chicago-preprocess.h"
 
 #define CHICAGO_STAGE_WIDTH 80u
@@ -551,6 +553,135 @@ goodix_chicago_preprocessor_free (GoodixChicagoPreprocessor *self)
   g_free (self);
 }
 
+/* ---- adaptive state serialization (openchicago format) -------------------
+ * Every field that changes after preprocessor_new(), little endian, in a
+ * fixed order; the calibration payload and ImageBase are saved by the caller
+ * (openchicago.c) and fed back to preprocessor_new() first. */
+
+#define STATE_FIELDS(X)                                                        \
+  X (framenum, 4)                                                              \
+  X (kr, 2)                                                                    \
+  X (normalized_gain, 2)                                                       \
+  X (multiplier, 2)                                                            \
+  X (auxiliary, 2)                                                             \
+  X (multiplier_count, 4)                                                      \
+  X (gain_selected, 4)                                                         \
+  X (repeat_count, 4)                                                          \
+  X (repeat_reference, 2)                                                      \
+  X (previous_output, 1)                                                       \
+  X (context, 1)                                                               \
+  X (history_started, 4)                                                       \
+  X (history_count, 4)                                                         \
+  X (history, 2)                                                               \
+  X (presence, 1)                                                              \
+  X (history_threshold, 4)                                                     \
+  X (history_coverage, 4)                                                      \
+  X (residue, 1)                                                               \
+  X (residue_count, 4)                                                         \
+  X (residue_coverage, 4)                                                      \
+  X (held_state, 4)                                                            \
+  X (held_code, 4)
+
+G_STATIC_ASSERT (sizeof (gboolean) == 4 && sizeof (gint) == 4);
+
+static void
+state_put (GByteArray *out, const void *field, gsize size, guint unit)
+{
+  const guint8 *p = field;
+
+  for (gsize i = 0; i < size; i += unit)
+    for (guint b = 0; b < unit; b++)
+      {
+        /* host order -> little endian */
+#if G_BYTE_ORDER == G_LITTLE_ENDIAN
+        g_byte_array_append (out, p + i + b, 1);
+#else
+        g_byte_array_append (out, p + i + unit - 1 - b, 1);
+#endif
+      }
+}
+
+static void
+state_get (void *field, gsize size, guint unit, const guint8 *in)
+{
+  guint8 *p = field;
+
+  for (gsize i = 0; i < size; i += unit)
+    for (guint b = 0; b < unit; b++)
+#if G_BYTE_ORDER == G_LITTLE_ENDIAN
+      p[i + b] = in[i + b];
+#else
+      p[i + unit - 1 - b] = in[i + b];
+#endif
+}
+
+gsize
+goodix_chicago_preprocessor_state_size (void)
+{
+  GoodixChicagoPreprocessor *self = NULL;
+  gsize size = 0;
+
+#define X(field, unit) size += sizeof (self->field);
+  STATE_FIELDS (X)
+#undef X
+  return size;
+}
+
+void
+goodix_chicago_preprocessor_save_state (const GoodixChicagoPreprocessor *self,
+                                        GByteArray                      *out)
+{
+  g_return_if_fail (self != NULL);
+  g_return_if_fail (out != NULL);
+#define X(field, unit) state_put (out, &self->field, sizeof (self->field), unit);
+  STATE_FIELDS (X)
+#undef X
+}
+
+gboolean
+goodix_chicago_preprocessor_load_state (GoodixChicagoPreprocessor *self,
+                                        const guint8              *data,
+                                        gsize                      size,
+                                        GError                   **error)
+{
+  g_return_val_if_fail (self != NULL, FALSE);
+  if (size != goodix_chicago_preprocessor_state_size ())
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "openchicago: preprocessor state is %" G_GSIZE_FORMAT
+                   " bytes, expected %" G_GSIZE_FORMAT,
+                   size, goodix_chicago_preprocessor_state_size ());
+      return FALSE;
+    }
+#define X(field, unit) \
+  state_get (&self->field, sizeof (self->field), unit, data); \
+  data += sizeof (self->field);
+  STATE_FIELDS (X)
+#undef X
+  return TRUE;
+}
+
+/* Tests: TRUE when both objects hold the same ImageBase, correction planes
+ * and adaptive state (every member after the calibration reference; both
+ * objects come from g_new0, so padding compares equal). */
+gboolean
+goodix_chicago_preprocessor_state_equal (const GoodixChicagoPreprocessor *a,
+                                         const GoodixChicagoPreprocessor *b)
+{
+  const gsize start = G_STRUCT_OFFSET (GoodixChicagoPreprocessor, image_base);
+
+  g_return_val_if_fail (a != NULL && b != NULL, FALSE);
+  return memcmp ((const guint8 *) a + start, (const guint8 *) b + start,
+                 sizeof (GoodixChicagoPreprocessor) - start) == 0;
+}
+
+GBytes *
+goodix_chicago_preprocessor_get_calibration (const GoodixChicagoPreprocessor *self)
+{
+  g_return_val_if_fail (self != NULL, NULL);
+  return self->calibration;
+}
+
 void
 goodix_chicago_preprocessor_prepare_raw (GoodixChicagoPreprocessor *self,
                                          const guint16              raw[GOODIX_CHICAGO_PIXELS],
@@ -577,69 +708,6 @@ goodix_chicago_preprocessor_get_image_base (const GoodixChicagoPreprocessor *sel
   g_return_val_if_fail (self != NULL, NULL);
 
   return self->image_base;
-}
-
-gboolean
-goodix_chicago_preprocessor_get_corrections (const GoodixChicagoPreprocessor *self,
-                                             guint                            pixel,
-                                             guint16                         *gain,
-                                             guint16                         *offset)
-{
-  g_return_val_if_fail (self != NULL, FALSE);
-
-  if (pixel >= GOODIX_CHICAGO_PIXELS)
-    return FALSE;
-
-  if (gain)
-    *gain = self->gain[pixel];
-  if (offset)
-    *offset = self->offset[pixel];
-  return TRUE;
-}
-
-gboolean
-goodix_chicago_preprocessor_get_normalized_gain (
-  const GoodixChicagoPreprocessor *self,
-  guint                            pixel,
-  guint16                         *normalized_gain)
-{
-  g_return_val_if_fail (self != NULL, FALSE);
-
-  if (!self->gain_selected || pixel >= GOODIX_CHICAGO_PIXELS)
-    return FALSE;
-
-  if (normalized_gain)
-    *normalized_gain = self->normalized_gain[pixel];
-  return TRUE;
-}
-
-/* Source plane for already prepared inputs with the current gain and
- * multiplier, without touching the adaptive state. */
-void
-goodix_chicago_preprocessor_build_source_plane (
-  GoodixChicagoPreprocessor *self,
-  const guint16              current[GOODIX_CHICAGO_PIXELS],
-  const guint16              image_base[GOODIX_CHICAGO_PIXELS],
-  guint16                    source[GOODIX_CHICAGO_PIXELS])
-{
-  const gboolean apply_multiplier = !(self->multiplier_count < 5 &&
-                                      self->framenum > CHICAGO_GAIN_LIMIT);
-
-  for (guint pixel = 0; pixel < GOODIX_CHICAGO_PIXELS; pixel++)
-    {
-      const guint32 difference = image_base[pixel] > current[pixel] ?
-                                 image_base[pixel] - current[pixel] : 0;
-      guint32 gain = self->gain_selected ? self->normalized_gain[pixel] : 0x2000u;
-
-      if (apply_multiplier && self->gain_selected)
-        gain = (gain * self->multiplier[pixel] + 0x1000u) >> 13;
-      if (self->kr[pixel] == 0 && self->gain_selected)
-        source[pixel] = difference;
-      else if (gain == 0)
-        source[pixel] = difference << 13;
-      else
-        source[pixel] = (difference * 0x2000u + gain / 2) / gain;
-    }
 }
 
 guint16
@@ -1237,17 +1305,6 @@ build_enhanced_prepared_internal (
     }
 }
 
-void
-goodix_chicago_preprocessor_build_enhanced_prepared (
-  GoodixChicagoPreprocessor *self,
-  const guint16              current[GOODIX_CHICAGO_PIXELS],
-  const guint16              image_base[GOODIX_CHICAGO_PIXELS],
-  guint8                     enhanced[GOODIX_CHICAGO_PIXELS])
-{
-  build_enhanced_prepared_internal (
-    self, current, image_base, 0, enhanced, NULL, NULL, NULL, NULL, NULL);
-}
-
 static gboolean
 candidate_reject_stats_is_poor_capture (
   GoodixChicagoCandidateRejectStats *stats)
@@ -1319,15 +1376,6 @@ mode24_raw_input_is_valid (
       }
 
   return valid * 100 > total * 50;
-}
-
-void
-goodix_chicago_preprocessor_build_enhanced (
-  GoodixChicagoPreprocessor *self,
-  const guint16              raw[GOODIX_CHICAGO_PIXELS],
-  guint8                     enhanced[GOODIX_CHICAGO_PIXELS])
-{
-  goodix_chicago_preprocessor_build_enhanced_checked (self, raw, enhanced);
 }
 
 /* AlgoChicago 0x180044000 (mode 24, end of every frame): when the output is
@@ -1743,19 +1791,6 @@ process_internal (GoodixChicagoPreprocessor *self,
   return status;
 }
 
-GoodixChicagoPreprocessStatus
-goodix_chicago_preprocessor_build_enhanced_checked (
-  GoodixChicagoPreprocessor *self,
-  const guint16              raw[GOODIX_CHICAGO_PIXELS],
-  guint8                     enhanced[GOODIX_CHICAGO_PIXELS])
-{
-  g_return_val_if_fail (self != NULL, GOODIX_CHICAGO_PREPROCESS_STATUS_OK);
-  g_return_val_if_fail (raw != NULL, GOODIX_CHICAGO_PREPROCESS_STATUS_OK);
-  g_return_val_if_fail (enhanced != NULL, GOODIX_CHICAGO_PREPROCESS_STATUS_OK);
-
-  return process_internal (self, raw, 0, FALSE, enhanced, NULL, NULL);
-}
-
 static void
 expand_resolution_promotion_mask (
   const guint16 primary[GOODIX_CHICAGO_PIXELS],
@@ -1807,19 +1842,6 @@ expand_resolution_promotion_mask (
 
   for (guint pixel = 0; pixel < GOODIX_CHICAGO_PIXELS; pixel++)
     mask[pixel] = mask[pixel] != 0 ? 0xff : 0;
-}
-
-void
-goodix_chicago_preprocessor_build_resolution_input_mask (
-  guint8 input_mask[GOODIX_CHICAGO_PIXELS])
-{
-  g_return_if_fail (input_mask != NULL);
-
-  for (guint y = 0; y < CHICAGO_STAGE_HEIGHT; y++)
-    for (guint x = 0; x < CHICAGO_STAGE_WIDTH; x++)
-      input_mask[y * CHICAGO_STAGE_WIDTH + x] =
-        x >= 6 && x + 6 < CHICAGO_STAGE_WIDTH &&
-        y >= 6 && y + 6 < CHICAGO_STAGE_HEIGHT ? 0xff : 0;
 }
 
 void
@@ -2831,24 +2853,6 @@ static void build_resolution_map_labels_analysis (
   GoodixChicagoResolutionSecondaryAnalysis *analysis_out,
   guint16                                  *filtered_gradient_out);
 
-void
-goodix_chicago_preprocessor_build_resolution_map_labels_full (
-  const guint16 secondary[GOODIX_CHICAGO_PIXELS],
-  const guint8  input_mask[GOODIX_CHICAGO_PIXELS],
-  guint8        labels[GOODIX_CHICAGO_PIXELS],
-  guint        *peak_state_out)
-{
-  GoodixChicagoResolutionSecondaryAnalysis analysis;
-
-  g_return_if_fail (secondary != NULL);
-  g_return_if_fail (input_mask != NULL);
-  g_return_if_fail (labels != NULL);
-
-  build_resolution_map_labels_analysis (secondary, input_mask, labels, &analysis, NULL);
-  if (peak_state_out)
-    *peak_state_out = analysis.peak_state;
-}
-
 /* The classifier part of 0x18003eb10 up to 0x18003a2a0. The analysis of
  * 0x180040980 and the filtered gradient (which the DLL leaves in its input
  * plane) are returned for the context stages that follow. */
@@ -2927,60 +2931,6 @@ build_resolution_map_labels_analysis (
         primary, secondary, input_mask, &thresholds,
         labels, promotion_mask);
     }
-}
-
-void
-goodix_chicago_preprocessor_build_resolution_map_labels (
-  const guint16 secondary[GOODIX_CHICAGO_PIXELS],
-  const guint8  input_mask[GOODIX_CHICAGO_PIXELS],
-  guint8        labels[GOODIX_CHICAGO_PIXELS])
-{
-  goodix_chicago_preprocessor_build_resolution_map_labels_full (
-    secondary, input_mask, labels, NULL);
-}
-
-void
-goodix_chicago_preprocessor_build_resolution_map_full (
-  GoodixChicagoPreprocessor *self,
-  const guint16              raw[GOODIX_CHICAGO_PIXELS],
-  guint8                     labels[GOODIX_CHICAGO_PIXELS],
-  guint                     *peak_state_out)
-{
-  g_autofree guint16 *current = NULL;
-  g_autofree guint16 *image_base = NULL;
-  g_autofree guint16 *resolution_base = NULL;
-  g_autofree guint16 *secondary = NULL;
-  g_autofree guint8 *input_mask = NULL;
-
-  g_return_if_fail (self != NULL);
-  g_return_if_fail (raw != NULL);
-  g_return_if_fail (labels != NULL);
-
-  current = g_new (guint16, GOODIX_CHICAGO_PIXELS);
-  image_base = g_new (guint16, GOODIX_CHICAGO_PIXELS);
-  resolution_base = g_new (guint16, GOODIX_CHICAGO_PIXELS);
-  secondary = g_new (guint16, GOODIX_CHICAGO_PIXELS);
-  input_mask = g_new (guint8, GOODIX_CHICAGO_PIXELS);
-  goodix_chicago_preprocessor_prepare_raw (self, raw, current);
-  goodix_chicago_preprocessor_prepare_raw (
-    self, self->image_base, image_base);
-  goodix_chicago_preprocessor_build_resolution_base_plane (
-    current, image_base, resolution_base);
-  goodix_chicago_preprocessor_build_resolution_secondary_plane (
-    resolution_base, secondary);
-  goodix_chicago_preprocessor_build_resolution_input_mask (input_mask);
-  goodix_chicago_preprocessor_build_resolution_map_labels_full (
-    secondary, input_mask, labels, peak_state_out);
-}
-
-void
-goodix_chicago_preprocessor_build_resolution_map (
-  GoodixChicagoPreprocessor *self,
-  const guint16              raw[GOODIX_CHICAGO_PIXELS],
-  guint8                     labels[GOODIX_CHICAGO_PIXELS])
-{
-  goodix_chicago_preprocessor_build_resolution_map_full (
-    self, raw, labels, NULL);
 }
 
 guint
@@ -3068,18 +3018,6 @@ goodix_chicago_preprocessor_classify_resolution_labels (
   if (auxiliary_out)
     *auxiliary_out = auxiliary;
   return class3;
-}
-
-guint
-goodix_chicago_preprocessor_pack_resolution_code (guint code)
-{
-  static const guint scale_by_code[10] = {
-    0, 2, 2, 3, 0, 1, 2, 4, 5, 5,
-  };
-
-  if (code >= G_N_ELEMENTS (scale_by_code))
-    return 0;
-  return scale_by_code[code] << 8;
 }
 
 void
@@ -3268,13 +3206,6 @@ compute_coverage_q16 (const guint8 enhanced[GOODIX_CHICAGO_PIXELS])
   return contrast_map_q16 (enhanced, 120, NULL, 0);
 }
 
-gint
-goodix_chicago_preprocessor_compute_coverage (
-  const guint8 enhanced[GOODIX_CHICAGO_PIXELS])
-{
-  return (compute_coverage_q16 (enhanced) * 100u) >> 16;
-}
-
 /* `annotated`, when given, receives the 0x18000fca0 mask annotation: 0xff for
  * the enabled pixels of the 18x18 boxes around windows whose coherence percent
  * is valid and not above the median, 0 elsewhere. */
@@ -3433,17 +3364,6 @@ compute_base_quality_annotated (const guint8 enhanced[GOODIX_CHICAGO_PIXELS],
   return (((valid_windows / 2 + coherence_sum) / valid_windows) * 100) >> 16;
 }
 
-gint
-goodix_chicago_preprocessor_compute_base_quality (
-  const guint8 enhanced[GOODIX_CHICAGO_PIXELS],
-  const guint8 quality_mask[GOODIX_CHICAGO_PIXELS])
-{
-  g_return_val_if_fail (enhanced != NULL, 0);
-  g_return_val_if_fail (quality_mask != NULL, 0);
-
-  return compute_base_quality_annotated (enhanced, quality_mask, NULL);
-}
-
 /* AlgoChicago 0x180010200 + 0x18000fb70: percentage of enabled pixels whose
  * 3x3 ring (neighbor brighter than the center by more than 4) has at most two
  * transitions and exactly four bright neighbors, among the enabled pixels
@@ -3562,18 +3482,6 @@ goodix_chicago_preprocessor_build_quality_mask (
           quality_mask[pixel] = saturated_cross ? 0 : 0xff;
         }
     }
-}
-
-gint
-goodix_chicago_preprocessor_compute_base_quality_from_enhanced (
-  const guint8 enhanced[GOODIX_CHICAGO_PIXELS])
-{
-  guint8 quality_mask[GOODIX_CHICAGO_PIXELS];
-
-  g_return_val_if_fail (enhanced != NULL, 0);
-  goodix_chicago_preprocessor_build_quality_mask (enhanced, quality_mask);
-  return goodix_chicago_preprocessor_compute_base_quality (
-    enhanced, quality_mask);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -4515,21 +4423,6 @@ context_build (GoodixChicagoPreprocessor *self,
 }
 
 GoodixChicagoPreprocessStatus
-goodix_chicago_preprocessor_process (GoodixChicagoPreprocessor *self,
-                                     const guint16              raw[GOODIX_CHICAGO_PIXELS],
-                                     gint                       purpose,
-                                     guint8                     enhanced[GOODIX_CHICAGO_PIXELS],
-                                     guint8                    *quality,
-                                     guint8                    *coverage)
-{
-  g_return_val_if_fail (self != NULL, GOODIX_CHICAGO_PREPROCESS_STATUS_OK);
-  g_return_val_if_fail (raw != NULL, GOODIX_CHICAGO_PREPROCESS_STATUS_OK);
-  g_return_val_if_fail (enhanced != NULL, GOODIX_CHICAGO_PREPROCESS_STATUS_OK);
-
-  return process_internal (self, raw, purpose, FALSE, enhanced, quality, coverage);
-}
-
-GoodixChicagoPreprocessStatus
 goodix_chicago_preprocessor_process_context (GoodixChicagoPreprocessor *self,
                                              const guint16              raw[GOODIX_CHICAGO_PIXELS],
                                              gint                       purpose,
@@ -4549,16 +4442,6 @@ goodix_chicago_preprocessor_process_context (GoodixChicagoPreprocessor *self,
   if (context)
     memcpy (context, self->context, sizeof (self->context));
   return status;
-}
-
-void
-goodix_chicago_preprocessor_get_context (const GoodixChicagoPreprocessor *self,
-                                         guint8                           context[GOODIX_CHICAGO_PREPROCESS_CONTEXT_SIZE])
-{
-  g_return_if_fail (self != NULL);
-  g_return_if_fail (context != NULL);
-
-  memcpy (context, self->context, sizeof (self->context));
 }
 
 void

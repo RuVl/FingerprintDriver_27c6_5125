@@ -88,26 +88,6 @@ void goodix_chicago_preprocessor_prepare_raw (GoodixChicagoPreprocessor *self,
 
 const guint16 *goodix_chicago_preprocessor_get_image_base (const GoodixChicagoPreprocessor *self);
 
-gboolean goodix_chicago_preprocessor_get_corrections (const GoodixChicagoPreprocessor *self,
-                                                      guint                            pixel,
-                                                      guint16                         *gain,
-                                                      guint16                         *offset);
-
-/* Exact first calibration stage recovered from AlgoChicago+0x4d810. It
- * scales the CRC-validated gain map to a mean of 0x2000 with the vendor's
- * rounded integer arithmetic. A zero-mean map has no usable vendor output. */
-gboolean goodix_chicago_preprocessor_get_normalized_gain (const GoodixChicagoPreprocessor *self,
-                                                          guint                            pixel,
-                                                          guint16                         *normalized_gain);
-
-/* Exact +0x4b300 source-plane result for already prepared current/ImageBase
- * inputs. This applies the normalized calibration gain with vendor rounding.
- * Inputs and output must not alias. */
-void goodix_chicago_preprocessor_build_source_plane (GoodixChicagoPreprocessor *self,
-                                                     const guint16              current[GOODIX_CHICAGO_PIXELS],
-                                                     const guint16              image_base[GOODIX_CHICAGO_PIXELS],
-                                                     guint16                    source[GOODIX_CHICAGO_PIXELS]);
-
 /* Exact mode-0x18 mask built before +0x43a00. The returned threshold is
  * derived from positive ImageBase-current samples above 120. A mask byte is
  * 0xff when that difference reaches the threshold and current is not the
@@ -165,32 +145,6 @@ gboolean goodix_chicago_preprocessor_select_alternate_mode24 (gint primary_score
                                                               gint alternate_score,
                                                               gint correlation_q8,
                                                               gint reference_score);
-
-/* Compose the exact recovered preprocessing path for already prepared
- * current and ImageBase planes. */
-void goodix_chicago_preprocessor_build_enhanced_prepared (GoodixChicagoPreprocessor *self,
-                                                          const guint16              current[GOODIX_CHICAGO_PIXELS],
-                                                          const guint16              image_base[GOODIX_CHICAGO_PIXELS],
-                                                          guint8                     enhanced[GOODIX_CHICAGO_PIXELS]);
-
-/* Complete recovered raw-frame to enhanced-image path. The retained raw
- * ImageBase and the current transport frame are prepared internally. */
-void goodix_chicago_preprocessor_build_enhanced (GoodixChicagoPreprocessor *self,
-                                                 const guint16              raw[GOODIX_CHICAGO_PIXELS],
-                                                 guint8                     enhanced[GOODIX_CHICAGO_PIXELS]);
-
-/* Complete raw-frame path plus the recovered mode-24 capture-policy result.
- * The official wrapper applies this local-contrast rejection only while the
- * finalized quality is below 35; low exported quality or coverage alone is
- * not a bad capture. The enhanced image is produced for OK and POOR_CAPTURE;
- * BAD_INPUT returns before the official candidate builder and zeroes it. */
-GoodixChicagoPreprocessStatus goodix_chicago_preprocessor_build_enhanced_checked (GoodixChicagoPreprocessor *self,
-                                                                                  const guint16              raw[GOODIX_CHICAGO_PIXELS],
-                                                                                  guint8                     enhanced[GOODIX_CHICAGO_PIXELS]);
-
-/* Exact fixed 80x64 classifier mask: a six-pixel disabled border surrounding
- * the 68x52 enabled interior (3,536 pixels). */
-void goodix_chicago_preprocessor_build_resolution_input_mask (guint8 input_mask[GOODIX_CHICAGO_PIXELS]);
 
 /* Exact mode-0x18 input plane produced by +0x386a0 for already prepared
  * current/ImageBase samples. Unlike the enhanced-image source, this path does
@@ -282,30 +236,6 @@ guint goodix_chicago_preprocessor_build_exceptional_resolution_labels (const gui
                                                                        guint8                                   labels[GOODIX_CHICAGO_PIXELS],
                                                                        guint8                                   promotion_mask[GOODIX_CHICAGO_PIXELS]);
 
-/* Composes the recovered +0x41330, +0x3f4c0, +0x3c860, +0x38ae0 and
- * +0x3ac50 boundaries into the official pre-final resolution labels. */
-void goodix_chicago_preprocessor_build_resolution_map_labels (const guint16 secondary[GOODIX_CHICAGO_PIXELS],
-                                                              const guint8  input_mask[GOODIX_CHICAGO_PIXELS],
-                                                              guint8        labels[GOODIX_CHICAGO_PIXELS]);
-
-/* The same map generator, retaining the otherwise transient first byte of
- * the six-byte preprocessor context consumed by feature construction.  For
- * production mode 0x18 this is +0x41330's peak-state output. */
-void goodix_chicago_preprocessor_build_resolution_map_labels_full (const guint16 secondary[GOODIX_CHICAGO_PIXELS],
-                                                                   const guint8  input_mask[GOODIX_CHICAGO_PIXELS],
-                                                                   guint8        labels[GOODIX_CHICAGO_PIXELS],
-                                                                   guint        *peak_state_out);
-
-/* Raw-frame entry point for the pre-final mode-0x18 resolution map. */
-void goodix_chicago_preprocessor_build_resolution_map (GoodixChicagoPreprocessor *self,
-                                                       const guint16              raw[GOODIX_CHICAGO_PIXELS],
-                                                       guint8                     labels[GOODIX_CHICAGO_PIXELS]);
-
-void goodix_chicago_preprocessor_build_resolution_map_full (GoodixChicagoPreprocessor *self,
-                                                            const guint16              raw[GOODIX_CHICAGO_PIXELS],
-                                                            guint8                     labels[GOODIX_CHICAGO_PIXELS],
-                                                            guint                     *peak_state_out);
-
 /* Exact AlgoChicago+0x45890 class-count boundary. Labels 1 and 2 are cleared
  * in place, as in the DLL; labels 0 and 3 are retained. The return value is
  * the number of class-3 pixels. */
@@ -316,10 +246,6 @@ guint goodix_chicago_preprocessor_classify_resolution_labels (guint     mode,
                                                               guint    *code_out,
                                                               gboolean *auxiliary_out);
 
-/* Exact AlgoChicago+0x54080 discrete-code mapping, packed in the high byte
- * consumed by +0x53210. The production mode-0x18 path uses low code zero. */
-guint goodix_chicago_preprocessor_pack_resolution_code (guint code);
-
 /* Exact mode-0x18 wrapper around Chicago's core quality/coverage result.
  * `base_quality` and `coverage` are the signed integer outputs of +0x10030;
  * the returned values reproduce +0x10220's bias, low-coverage penalty, and
@@ -329,34 +255,11 @@ void goodix_chicago_preprocessor_finalize_metrics (gint    base_quality,
                                                    guint8 *quality_out,
                                                    guint8 *coverage_out);
 
-/* Exact AlgoChicago+0x509b0 enhanced-image coverage path: fixed Q16 Gaussian,
- * Sobel magnitude, reflected 15x15 local mean, and threshold-120 active-area
- * ratio, converted with the official 16.16-to-percent truncation. */
-gint goodix_chicago_preprocessor_compute_coverage (const guint8 enhanced[GOODIX_CHICAGO_PIXELS]);
-
-/* Exact mode-0x18 core texture quality at +0x10650. `quality_mask` is the
- * cleaned 0/0xff mask produced by the preceding +0x10410 stage. The function
- * does not reproduce the vendor's later in-place mask annotation. */
-gint goodix_chicago_preprocessor_compute_base_quality (const guint8 enhanced[GOODIX_CHICAGO_PIXELS],
-                                                       const guint8 quality_mask[GOODIX_CHICAGO_PIXELS]);
-
 /* Exact +0x10410/+0x52a10 cleaned mask used by the quality core. A pixel is
  * cleared only when it and all available axial neighbors at distance one and
  * two are saturated (0xff) in the enhanced image. */
 void goodix_chicago_preprocessor_build_quality_mask (const guint8 enhanced[GOODIX_CHICAGO_PIXELS],
                                                      guint8       quality_mask[GOODIX_CHICAGO_PIXELS]);
-
-gint goodix_chicago_preprocessor_compute_base_quality_from_enhanced (const guint8 enhanced[GOODIX_CHICAGO_PIXELS]);
-
-/* Complete per-frame entry point equivalent to AlgoChicago's preprocessor()
- * for profile 12: `raw` is one transport frame (64 rows x 80), `purpose` is 1
- * for enrollment and 0 for verification. Returns the DLL's status code. */
-GoodixChicagoPreprocessStatus goodix_chicago_preprocessor_process (GoodixChicagoPreprocessor *self,
-                                                                   const guint16              raw[GOODIX_CHICAGO_PIXELS],
-                                                                   gint                       purpose,
-                                                                   guint8                     enhanced[GOODIX_CHICAGO_PIXELS],
-                                                                   guint8                    *quality,
-                                                                   guint8                    *coverage);
 
 /* process() plus the per-frame context of 0x180043c70 (cbuf[0..5]). `hold`
  * corresponds to the DLL's seventh preprocessor() argument being 1 (frame flag
@@ -372,11 +275,6 @@ GoodixChicagoPreprocessStatus goodix_chicago_preprocessor_process_context (Goodi
                                                                            guint8                    *coverage,
                                                                            guint8                     context[GOODIX_CHICAGO_PREPROCESS_CONTEXT_SIZE]);
 
-/* Context bytes of the most recent process()/process_context() call (zeros
- * after BAD_INPUT, as the DLL leaves cbuf untouched then). */
-void goodix_chicago_preprocessor_get_context (const GoodixChicagoPreprocessor *self,
-                                              guint8                           context[GOODIX_CHICAGO_PREPROCESS_CONTEXT_SIZE]);
-
 /* Read-only view of the adaptive state (for tests and calibration saving). */
 typedef struct
 {
@@ -390,5 +288,20 @@ typedef struct
 
 void goodix_chicago_preprocessor_get_state (const GoodixChicagoPreprocessor *self,
                                             GoodixChicagoPreprocessState    *state);
+
+/* Every adaptive variable (including the 0x180043c70 context history that the
+ * DLL saves in calidata G+0x26488), little endian, fixed order.  Restore with
+ * preprocessor_new(same calibration, same ImageBase) + load_state(). */
+gsize goodix_chicago_preprocessor_state_size (void);
+void goodix_chicago_preprocessor_save_state (const GoodixChicagoPreprocessor *self,
+                                             GByteArray                      *out);
+gboolean goodix_chicago_preprocessor_load_state (GoodixChicagoPreprocessor *self,
+                                                 const guint8              *data,
+                                                 gsize                      size,
+                                                 GError                   **error);
+gboolean goodix_chicago_preprocessor_state_equal (const GoodixChicagoPreprocessor *a,
+                                                  const GoodixChicagoPreprocessor *b);
+/* The calibration payload given to preprocessor_new() (not a new reference). */
+GBytes *goodix_chicago_preprocessor_get_calibration (const GoodixChicagoPreprocessor *self);
 
 G_END_DECLS

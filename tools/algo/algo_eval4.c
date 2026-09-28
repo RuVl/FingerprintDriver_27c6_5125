@@ -19,6 +19,8 @@
 //       accumulates over the probes in record order, impostors are matched without study;
 //       STRACE=<file>, STUDY_DIR=<dir>: blob after every study, docs/stage7-study.md),
 //       DUMP_PROC=<file> (every preprocessor output; also <file>.cbuf with cbuf[0..15]),
+//       OVTRACE=<file> (count/progress/overlay/preoverlay after every enrolAddImage),
+//       EDEL=r1,r2,.. (enrolDeleteImage right after adding record r),
 //       TPL_OUT=<file> (packed gallery, cmp_tpl.py), ETRACE=<file> (template T after every
 //       enrolAddImage: sub count, group_state, relation table; docs/stage4-enroll.md).
 #include <stdint.h>
@@ -75,7 +77,7 @@ typedef int MS (*tstudy_t)(int *);
 static ppp_t ppp; static v_t initcali, ppexit; static pp_t pp;
 static estart_t estart; static eadd_t eadd; static eget_t eget; static efin_t efin;
 static idi_t idi; static tsize_t tsize; static tpack_t tpack; static tunpack_t tunpack;
-static tdel_t tdel; static tstudy_t tstudy;
+static tdel_t tdel, edel; static tstudy_t tstudy;
 
 static uint16_t *raw, *bg;                 // [nrec][PX], transposed to IH x IW
 static uint8_t *proc;                      // [nrec][PX]
@@ -150,6 +152,12 @@ static int preprocess(int i, int purpose) {
   return ppc[i];
 }
 
+static FILE *ovtrace(void) {   // OVTRACE file, opened once
+  static FILE *ot;
+  if (!ot) ot = fopen(getenv("OVTRACE"), "w");
+  return ot;
+}
+
 // enroll the given records (already preprocessed with purpose=1) -> packed blob
 static uint8_t *enroll(const int *recs, int n, int *len, int *added, int *entries) {
   // EngineAdapter calls enrolStart() = enrolStartEx(&50)
@@ -165,8 +173,32 @@ static uint8_t *enroll(const int *recs, int n, int *len, int *added, int *entrie
   for (int k = 0; k < n; k++) {
     int r = recs[k];
     static int o3;
-    if (eadd(sess, &dsts[r], opt("EADD_O3") ? (void *)&o3 : cbufs + (size_t)r * CBUF_SZ, raw + (size_t)r * PX, 0, qcovs[r]) == 0)
+    int erc = eadd(sess, &dsts[r], opt("EADD_O3") ? (void *)&o3 : cbufs + (size_t)r * CBUF_SZ, raw + (size_t)r * PX, 0, qcovs[r]);
+    if (erc == 0)
       (*added)++;
+    if (getenv("OVTRACE")) {   // enrolAddImage outputs: sess+0xa count, +0xc progress, +0x10 preoverlay, +0x14 overlay (notes/81)
+      FILE *ot = ovtrace();
+      if (ot) {
+        fprintf(ot, "add rec %d rc 0x%x count %d progress %d overlay %d preoverlay %d\n", r, erc,
+                *(int16_t *)((char *)sess + 0xa), *(int *)((char *)sess + 0xc),
+                *(int *)((char *)sess + 0x14), *(int *)((char *)sess + 0x10));
+        fflush(ot);
+      }
+    }
+    if (getenv("EDEL")) {   // EDEL=r1,r2,..: enrolDeleteImage right after adding record r (backup path, notes/81)
+      char key[16];
+      snprintf(key, sizeof key, ",%d,", r);
+      char list[512];
+      snprintf(list, sizeof list, ",%s,", getenv("EDEL"));
+      if (strstr(list, key)) {
+        int drc = edel(sess);
+        if (getenv("OVTRACE")) {
+          FILE *dt = ovtrace();
+          if (dt) fprintf(dt, "del rec %d rc 0x%x count %d\n", r, drc, *(int16_t *)((char *)sess + 0xa));
+          if (dt) fflush(dt);
+        }
+      }
+    }
     if (getenv("ETRACE")) {   // stage 4: template state after every enrolAddImage (cmp with diff)
       static FILE *et;
       if (!et) et = fopen(getenv("ETRACE"), "w");
@@ -268,7 +300,7 @@ int main(int argc, char **argv) {
   estart = need("enrolStartEx"); eadd = need("enrolAddImage"); eget = need("enrolGetTemplate");
   efin = need("enrolFinish"); idi = need("identifyImageWrapper");
   tsize = need("templateGetPackedSize"); tpack = need("templatePack");
-  tunpack = need("templateUnPack"); tdel = need("templateDelete"); tstudy = need("templateStudy");
+  tunpack = need("templateUnPack"); tdel = need("templateDelete"); edel = need("enrolDeleteImage"); tstudy = need("templateStudy");
 
   FILE *f = fopen("frames_raw.bin", "rb");
   if (!f) { perror("frames_raw.bin"); return 1; }

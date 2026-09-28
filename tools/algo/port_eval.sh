@@ -19,8 +19,9 @@
 #                               AlgoChicago.dll, docs/stage7-study.md) applied on top of the patched
 #                               goodix-chicago-{match,enrollment,runtime}.c and their headers
 #                               (.port-sfixes/, first on the include path); use with STUDY=1.
-#   OPENPP=1 FFIXES=1 ...       preprocessor from openchicago/src (stage 1, bit-exact) instead of
-#                               the port's (FIXES is then ignored).
+#   OPENPP=1 ...                retired 2026-09-29: the openchicago library (openchicago/, docs/stage-lib.md)
+#                               replaced this mode; its end-to-end check without the DLL is
+#                               openchicago/tests/e2e.sh (test_e2e uses only openchicago.h).
 # OTP: taken from the newest dumps/probe-*.json (not committed) unless OTP is already set.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
@@ -60,8 +61,8 @@ if [ -n "$SFIXES" ]; then
   bin=${bin}_sfixes
 fi
 if [ -n "$OPENPP" ]; then
-  [ -n "$FFIXES" ] || { echo "OPENPP=1 needs FFIXES=1" >&2; exit 2; }
-  bin=${bin}_openpp
+  echo "OPENPP=1 is retired: use openchicago/tests/e2e.sh (openchicago library, docs/stage-lib.md)" >&2
+  exit 2
 fi
 if [ -n "$FIXES" ]; then
   fixed_copy "$here/.port-fixes" "$pp" "$here/port_preprocess_fixes.patch"

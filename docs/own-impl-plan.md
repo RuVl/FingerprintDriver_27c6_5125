@@ -27,11 +27,12 @@
 | 5 | Матчер (выравнивание, score, решение) | identifyImage | **бит-в-бит по score и подшаблону**: N=12 0/127, WARM 0/124, N=15 0/124, N=20 0/119 (`cmp_match.py --score`), чужих 0; проход 2 0x180024e10, селектор с inliers, fallback 0x180026f40, пропуск группы 0x1800292a4; не перенесена 0x18002bc90 (на датасете не срабатывает), docs/stage5-match.md |
 | 6 | Шаблон pack/unpack (формат совместим с DLL — для перекрёстных тестов) | templatePack | — |
 | 7 | templateStudy (дообучение после совпадения) | templateStudy | **готово для N ≤ 20 (без замены при полной ёмкости)**: blob после каждого study = DLL (N=12 23/23, 12 WARM 26/26, 15 20/20, 20 16/16), решения и score/idx ≠ 0, чужих 0; `SFIXES=1`, `STUDY=1`, `cmp_study.sh`, docs/stage7-study.md. Не проверено: путь замены 0x18005cba0 (ёмкость 50 на датасете не достигается) |
+| — | Библиотека openchicago (`openchicago/`, meson, API `include/openchicago.h`) | весь конвейер | **готово**: порт + патчи перенесены, глобалов нет, мёртвый код удалён; e2e без DLL (только API): N=12 и 12 WARM — пробы, score/idx, gallery и study-blob = DLL (0 расхождений), чужих 0, то же с save/restore сеанса; overlay/preoverlay регистрации = DLL (0x180019410 перенесена); сериализация состояния (OCST, вкл. историю G+0x26488) — 7 точек k, 0 расхождений; протокол EngineAdapter — `OC_ENROLL_ENGINE`; docs/stage-lib.md |
 | 8 | Драйвер libfprint: FpDevice, enroll 12 стадий (протокол — notes/81), калибровка в файл (notes/80): save/load всего блока calidata, включая историю контекста G+0x26488; сверка save→load→кадры с DLL | — | — |
 
 ## Где что лежит
 
-- Наш код алгоритма: `openchicago/` (создаётся на стадии 1), тесты-сверки: `openchicago/tests/`.
+- Наш код алгоритма: библиотека `openchicago/` (meson, API `include/openchicago.h`, docs/stage-lib.md), тесты-сверки: `openchicago/tests/`.
 - Эталон/оракул: `tools/algo/` (`algo_eval4.c` `DUMP_PROC`, `port_eval.sh`, `cmp_proc.py`).
 - Знания о DLL: `tools/algo/re/notes/` (00 — конвейер и грабли, 80 — калибровка, 81 — регистрация).
 - Оценка порта: `docs/mr648-port-eval.md`, `tools/algo/port_preprocess_fixes.patch`.
@@ -102,3 +103,16 @@
   чужих 0; режимы без SFIXES и SFIXES без STUDY: N=12 0/127, score 0. Остаток: путь замены при полной ёмкости.
 - 2026-09-29: стадия 7 проверена мной: cmp_study.sh N=12 — 23/23 study-шагов побайтно (и независимо cmp -s 23 файлов),
   решения/score ≠ DLL 0/127; WARM — 26/26, 0/124; NEGATIVE=1 → exit 1; без STUDY с SFIXES — score ≠ DLL 0/127.
+- 2026-09-29: библиотека openchicago (агент). Файлы порта с патчами перенесены в openchicago/src, обёртки
+  port_eval стали кодом runtime (preprocessor_process_context → getFeature), состояние getFeature — в
+  `OcSession`, MTRACE/static удалены, мёртвый код вычищен по gc-sections (bir, compat, crc, старый путь
+  препроцессора, policy MR, system template). API `openchicago.h`: сеанс/calidata, preprocess, enroll
+  PLAIN/ENGINE (+add_pair), verify+study, save/load состояния OCST v1, print_data. meson + тесты: e2e.sh
+  (DLL-эталон oracle_feat STUDY=1 + трасса SEL) — n12/w12 и с RESTORE_AT 0 расхождений, чужих 0,
+  отрицательные ловятся; test_state (k = 1…230) 0; test_api OK; run.sh 155/155. Перенесены 0x180019410
+  (overlay/preoverlay = DLL на N=20/30) и enrolDeleteImage (3 сценария = DLL). Остаток: удаление кадра
+  после вливания в группу (лес связей в blob), сверка ENGINE с EngineAdapter, rebase сохранённого
+  состояния. `port_eval.sh OPENPP=1` выведен (заменён e2e.sh); algo_eval4: OVTRACE, EDEL.
+- 2026-09-29: библиотека openchicago проверена мной: чистая meson-сборка, `meson test` — 4 OK + 1 ожидаемый отказ
+  (порча состояния), 0 Fail; e2e через API = DLL (N=12, WARM, save/restore). libopenchicago.a не имеет внешних
+  символов кроме libc/GLib, упоминания DLL в src — только комментарии с адресами.
