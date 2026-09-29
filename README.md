@@ -12,9 +12,9 @@ submitted upstream as `goodix5125`.
 
 ## Status
 
-- On the author's laptop, enrolment and verification work through fprintd,
+- On my laptop, enrolment and verification work through fprintd,
   and so does `sudo` login through `pam_fprintd`: the enrolled finger matched
-  5 of 5 times, another finger 0 of 3 times.
+  27 of 30 times, another finger 0 of 70 times.
 - A single touch is not always enough. On the recorded dataset about half of
   the genuine single touches match, and no impostor touch has matched.
 - Only one unit has been tested.
