@@ -32,6 +32,14 @@ DEPS=$ROOT/deps/root/usr
 TEST_DIR=$SRC/tests/goodix5125
 PY=/usr/bin/python3          # системный python (нужен python-gobject), не .venv
 
+# g-ir-scanner и meson-скрипты зовут `env python3`: активированный .venv без
+# distutils/gi ломает сборку introspection -- убираем его из PATH
+if [ -n "${VIRTUAL_ENV:-}" ]; then
+  PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$VIRTUAL_ENV/bin" | paste -sd:)
+  export PATH
+  unset VIRTUAL_ENV
+fi
+
 banner() {
   printf '\n============================================================\n  %s\n============================================================\n' "$1"
 }
@@ -43,6 +51,8 @@ export GI_GIR_PATH="$DEPS/share/gir-1.0"
 
 step_check() {
   banner "1. Проверка зависимостей"
+  [ -d "/lib/modules/$(uname -r)" ] ||
+    die "нет модулей для работающего ядра $(uname -r) (ядро обновлено) -- перезагрузитесь, потом повторите"
   local missing=()
   command -v umockdev-record >/dev/null || missing+=(umockdev)
   command -v umockdev-run    >/dev/null || missing+=(umockdev)
