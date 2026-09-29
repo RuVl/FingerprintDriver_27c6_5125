@@ -82,7 +82,8 @@ is not writable, or `GOODIX5125_STATE_DIR`:
 - `learned/`: learned templates (see limitations).
 
 Files that belong to another sensor, and corrupt files, are rejected, never
-overwritten.
+overwritten. The state and the templates are only checksummed, so every
+counter and index read from them is range-checked on load.
 
 **Device emulation.** With `FP_DEVICE_EMULATION=1` (umockdev tests and their
 recording) the host side is deterministic, so that a recorded session replays
@@ -90,13 +91,22 @@ byte for byte: the TLS server gets its own OpenSSL library context with a small
 built-in RAND provider that returns a fixed pattern (ServerHello random,
 session ID and AES-GCM nonces are fixed; no session tickets), the all-zero PSK
 is used and never written, the `GOODIX5125_*` environment is ignored, and the
-state lives in a temporary directory that is removed on close.
+state lives in a temporary directory that is removed on close. umockdev
+replays a read that timed out on the device as an empty completion, so an
+IN transfer without data is treated as a timeout in every mode.
 
 ## Tests
 
-- `goodix5125`: framing, RX classification (optional ACK, stale messages),
-  OTP-based MCU configuration, image decoding, FDT bases, pairing and
-  calibration persistence, all on synthetic data;
+- `goodix5125` (umockdev, `tests/goodix5125/custom.py`): identify with an
+  empty gallery, enrolment with 12 stages, then verify with a deserialized
+  print until it matches (the recording has 3 non-matching touches before
+  the match). It replays byte for byte, TLS included. It was recorded with
+  a finger that is not used for login, since the frames in the capture are
+  effectively unencrypted;
+- `goodix5125` (unit): framing, RX classification (optional ACK, stale
+  messages), OTP-based MCU configuration, image decoding, FDT bases, pairing
+  and calibration persistence, rejection of out-of-range state counters, all
+  on synthetic data;
 - `goodix5125-tls`: the TLS-PSK memory-BIO transport against an in-process
   OpenSSL client, and the deterministic mode: the client side of a handshake
   replayed against a second server gets the same bytes back, and the recorded
@@ -129,13 +139,11 @@ files, and the sources are formatted with `scripts/uncrustify.cfg`.
   entries unused for 180 days expire and at most 50 are kept (least recently
   used first). A libfprint API for updated prints would make this store
   unnecessary.
-- **No umockdev recording yet.** `tests/goodix5125/custom.py` (enrolment with
-  12 stages, then verify with a deserialized print) is included, the recording
-  (`device`, `custom.pcapng`) and the `drivers_tests` entry are not yet. The
-  replay compares every host transfer with the recording, so it depends on the
-  exact bytes OpenSSL produces for the TLS handshake with the fixed randomness;
-  a different OpenSSL version on CI may change them (to be checked on CI).
-  A recording needs a sensor paired with the all-zero PSK.
+- **umockdev replay and OpenSSL.** The replay compares every host transfer
+  with the recording, so it depends on the exact bytes OpenSSL produces for
+  the TLS handshake with the fixed randomness. A different OpenSSL version on
+  CI could change them; this is to be checked on CI. A new recording needs a
+  sensor paired with the all-zero PSK.
 - **One unit tested.** Only one OEM-integrated unit has been tested; the
   sensor-specific calibration and pairing make testing more units hard.
 
