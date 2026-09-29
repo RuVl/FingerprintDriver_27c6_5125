@@ -110,7 +110,7 @@ step_record() {
      "enroll done" (12 засчитанных касаний; строки "enroll progress" с
      ошибкой — повтор, они не засчитываются).
   4. "verifying" — касание тем же пальцем, центром подушечки, как при регистрации;
-     при "verify done: no match" будет ещё попытка (всего до 3).
+     при "verify done: no match" будет ещё попытка (всего до 5).
   5. В конце должно быть "Saving USB capture as test case goodix5125" и
      "Done!". Если verify не совпал (AssertionError) — запустить record ещё раз.
 EOF
