@@ -480,7 +480,9 @@ goodix_chicago_match_refine_geometry (
         gint64 numerator = 0;
 
         for (guint row = 0; row < 3; row++)
-          numerator += cofactor[row][coefficient] * cross[row][axis];
+          numerator = (gint64) ((guint64) numerator +
+                                (guint64) cofactor[row][coefficient] *
+                                (guint64) cross[row][axis]);
         coefficients[coefficient][axis] =
           divide_nearest (numerator, determinant);
       }
@@ -1308,8 +1310,8 @@ match_transform_shape_type24 (const gint32 transform[6],
   *shear = 0;
   if (root_ac == 0)
     return;
-  horizontal = (a << 8) / root_ac;
-  orientation = (gint16) match_cordic_orientation ((c << 8) / root_ac,
+  horizontal = (a * 256) / root_ac;
+  orientation = (gint16) match_cordic_orientation ((c * 256) / root_ac,
                                                    &horizontal);
   if (orientation < 0)
     orientation = (gint16) (orientation + 0x6488);
@@ -1321,7 +1323,10 @@ match_transform_shape_type24 (const gint32 transform[6],
   denominator = match_integer_sqrt64 ((guint64) ((gint64) norm_ac * norm_bd));
   if (denominator != 0)
     {
-      const gint64 numerator = (gint64) (gint32) (b * a + d * c) << 16;
+      /* 32-bit wraparound as in the DLL */
+      const gint64 numerator =
+        (gint64) (gint32) ((guint32) b * (guint32) a + (guint32) d * (guint32) c) *
+        0x10000;
 
       *shear = (gint32) (numerator / (gint64) denominator);
       if (*shear < 0)
@@ -1356,9 +1361,9 @@ match_guided_candidates_type24 (const GoodixChicagoFeatureRecord *gallery_record
     {
       const gint32 x = (guint16) gallery_records[g].refined_x;
       const gint32 y = (guint16) gallery_records[g].refined_y;
-      const gint32 px = ((((inverse[2] << 8) + y * inverse[1] +
+      const gint32 px = ((((inverse[2] * 256) + y * inverse[1] +
                            x * inverse[0] + 0x80) >> 8) + 0x80) >> 8;
-      const gint32 py = ((((inverse[5] << 8) + 0x80 + y * inverse[4] +
+      const gint32 py = ((((inverse[5] * 256) + 0x80 + y * inverse[4] +
                            x * inverse[3]) >> 8) + 0x80) >> 8;
       GoodixChicagoMatchCandidate *candidate = &candidates[g];
 
@@ -1370,10 +1375,10 @@ match_guided_candidates_type24 (const GoodixChicagoFeatureRecord *gallery_record
             distance_matrix[g * GOODIX_CHICAGO_MATCH_MATRIX_STRIDE + p];
           const gint32 X = (guint16) probe_records[p].refined_x;
           const gint32 Y = (guint16) probe_records[p].refined_y;
-          const gint32 fx = transform[1] * Y + (transform[2] << 8) +
+          const gint32 fx = transform[1] * Y + (transform[2] * 256) +
                             transform[0] * X;
           const gint32 fy = transform[4] * Y + transform[3] * X +
-                            (transform[5] << 8);
+                            (transform[5] * 256);
           gint32 qx;
           gint32 qy;
 
@@ -1452,9 +1457,9 @@ match_guided_candidates_pass2_type24 (const GoodixChicagoFeatureRecord *gallery_
     {
       const gint32 x = (guint16) gallery_records[g].refined_x;
       const gint32 y = (guint16) gallery_records[g].refined_y;
-      const gint32 px = ((((inverse[2] << 8) + y * inverse[1] +
+      const gint32 px = ((((inverse[2] * 256) + y * inverse[1] +
                            x * inverse[0] + 0x80) >> 8) + 0x80) >> 8;
-      const gint32 py = ((((inverse[5] << 8) + 0x80 + y * inverse[4] +
+      const gint32 py = ((((inverse[5] * 256) + 0x80 + y * inverse[4] +
                            x * inverse[3]) >> 8) + 0x80) >> 8;
 
       if (px >= width - 5 || py >= height - 5 || px <= 5 || py <= 5)
@@ -1463,10 +1468,10 @@ match_guided_candidates_pass2_type24 (const GoodixChicagoFeatureRecord *gallery_
         {
           const gint32 X = (guint16) probe_records[p].refined_x;
           const gint32 Y = (guint16) probe_records[p].refined_y;
-          const gint32 fx = transform[1] * Y + (transform[2] << 8) +
+          const gint32 fx = transform[1] * Y + (transform[2] * 256) +
                             transform[0] * X;
           const gint32 fy = transform[4] * Y + transform[3] * X +
-                            (transform[5] << 8);
+                            (transform[5] * 256);
           gint32 qx, qy;
           guint d, d2;
 
@@ -2330,18 +2335,18 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
     *conf = 0;
   else if (*conf != 0 && rec->normalized_coverage < 30 && rec->geometry_count < 10)
     *conf = 0;
-  if (rec->secondary_geometry_count > 16 && ((rec->normalized_coverage >= 95 || rec->geometry_count > 9) && rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410 || rec->normalized_coverage < 95 && rec->geometry_count <= 9 && (t2 < 407 || rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410)) || rec->secondary_geometry_count <= 16 && rec->normalized_coverage >= 125 && ((rec->normalized_coverage >= 95 || rec->geometry_count > 9) && rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410 || rec->normalized_coverage < 95 && rec->geometry_count <= 9 && (t2 < 407 || rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410)))
+  if ((rec->secondary_geometry_count > 16 && (((rec->normalized_coverage >= 95 || rec->geometry_count > 9) && rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410) || (rec->normalized_coverage < 95 && rec->geometry_count <= 9 && (t2 < 407 || (rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410))))) || (rec->secondary_geometry_count <= 16 && rec->normalized_coverage >= 125 && (((rec->normalized_coverage >= 95 || rec->geometry_count > 9) && rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410) || (rec->normalized_coverage < 95 && rec->geometry_count <= 9 && (t2 < 407 || (rec->secondary_geometry_count < 12 && rec->geometry_count < rec->secondary_geometry_count && t2 <= 410))))))
     *conf = 0;
   else if (*conf != 0)
     {
       const gboolean b1_0 = rec->secondary_geometry_count <= 17 && t1 <= 205 && t0 <= 170 && rec->geometry_percent <= 18;
       const gboolean b1_1 = rec->geometry_percent <= 21 || b1_0;
-      const gboolean b1_2 = (rec->geometry_count > 13 || rec->secondary_geometry_count > 16 || t1 > 214 || rec->matched_percent > 50) && b1_0 || rec->geometry_count <= 13 && rec->secondary_geometry_count <= 16 && t1 <= 214 && rec->matched_percent <= 50 && b1_1;
+      const gboolean b1_2 = ((rec->geometry_count > 13 || rec->secondary_geometry_count > 16 || t1 > 214 || rec->matched_percent > 50) && b1_0) || (rec->geometry_count <= 13 && rec->secondary_geometry_count <= 16 && t1 <= 214 && rec->matched_percent <= 50 && b1_1);
       const gboolean b1_3 = t0 <= 170 || b1_2;
-      const gboolean b1_4 = (rec->geometry_count > 16 || t1 > 200) && b1_2 || rec->geometry_count <= 16 && t1 <= 200 && b1_3;
+      const gboolean b1_4 = ((rec->geometry_count > 16 || t1 > 200) && b1_2) || (rec->geometry_count <= 16 && t1 <= 200 && b1_3);
       const gboolean b1_5 = t1 <= 205 || b1_4;
-      const gboolean b1_6 = rec->secondary_geometry_count > 14 && b1_4 || rec->secondary_geometry_count <= 14 && b1_5;
-      if (rec->selector == 128 && (rec->geometry_count >= 7 && b1_6 || rec->geometry_count < 7 && (rec->geometry_percent < 10 || b1_6)))
+      const gboolean b1_6 = (rec->secondary_geometry_count > 14 && b1_4) || (rec->secondary_geometry_count <= 14 && b1_5);
+      if (rec->selector == 128 && ((rec->geometry_count >= 7 && b1_6) || (rec->geometry_count < 7 && (rec->geometry_percent < 10 || b1_6))))
         *conf = 0;
       if (rec->geometry_count <= 3 && rec->secondary_geometry_count <= 7 && rec->normalized_coverage <= 60 && rec->matched_percent <= 50)
         *conf = 0;
@@ -2356,87 +2361,87 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
           const gboolean b2_0 = t4 <= 664;
           const gboolean b2_1 = rec->geometry_count <= 6 && rec->secondary_geometry_count <= 8 && rec->normalized_coverage <= 50 && rec->matched_percent <= 45 && b2_0;
           const gboolean b2_2 = rec->selector <= 233 || b2_1;
-          const gboolean b2_3 = (rec->secondary_geometry_count > 13 || rec->geometry_percent > 21 || t1 > 212) && b2_1 || rec->secondary_geometry_count <= 13 && rec->geometry_percent <= 21 && t1 <= 212 && b2_2;
+          const gboolean b2_3 = ((rec->secondary_geometry_count > 13 || rec->geometry_percent > 21 || t1 > 212) && b2_1) || (rec->secondary_geometry_count <= 13 && rec->geometry_percent <= 21 && t1 <= 212 && b2_2);
           const gboolean b2_4 = rec->selector <= 234 || b2_3;
-          const gboolean b2_5 = (rec->secondary_geometry_count > 16 || rec->geometry_percent > 15 || t1 > 205) && b2_3 || rec->secondary_geometry_count <= 16 && rec->geometry_percent <= 15 && t1 <= 205 && b2_4;
+          const gboolean b2_5 = ((rec->secondary_geometry_count > 16 || rec->geometry_percent > 15 || t1 > 205) && b2_3) || (rec->secondary_geometry_count <= 16 && rec->geometry_percent <= 15 && t1 <= 205 && b2_4);
           const gboolean b2_6 = t4 <= 655 || b2_5;
-          const gboolean b2_7 = (rec->secondary_geometry_count > 9 || rec->normalized_coverage > 55 || rec->matched_percent > 62) && b2_5 || rec->secondary_geometry_count <= 9 && rec->normalized_coverage <= 55 && rec->matched_percent <= 62 && b2_6;
-          if (rec->geometry_count > 5 && b2_1 || rec->geometry_count <= 5 && ((rec->secondary_geometry_count > 7 || rec->normalized_coverage > 52 || rec->geometry_percent > 35) && b2_7 || rec->secondary_geometry_count <= 7 && rec->normalized_coverage <= 52 && rec->geometry_percent <= 35 && (t4 <= 665 || b2_7)))
+          const gboolean b2_7 = ((rec->secondary_geometry_count > 9 || rec->normalized_coverage > 55 || rec->matched_percent > 62) && b2_5) || (rec->secondary_geometry_count <= 9 && rec->normalized_coverage <= 55 && rec->matched_percent <= 62 && b2_6);
+          if ((rec->geometry_count > 5 && b2_1) || (rec->geometry_count <= 5 && (((rec->secondary_geometry_count > 7 || rec->normalized_coverage > 52 || rec->geometry_percent > 35) && b2_7) || (rec->secondary_geometry_count <= 7 && rec->normalized_coverage <= 52 && rec->geometry_percent <= 35 && (t4 <= 665 || b2_7)))))
             *conf = 0;
           else if (rec->geometry_count <= 8 && rec->secondary_geometry_count <= 10 && rec->selector <= 236 && t1 <= 224 && rec->normalized_coverage <= 125 && rec->geometry_percent <= 18)
             *conf = 0;
           else if (rec->geometry_count <= 7 && rec->secondary_geometry_count <= 8 && rec->selector <= 223 && t1 <= 221 && rec->normalized_coverage <= 64 && rec->geometry_percent <= 42)
             *conf = 0;
-          else if (rec->geometry_count <= 5 && ((rec->secondary_geometry_count > 10 || rec->selector > 230 || t1 > 220 || rec->normalized_coverage > 91) && rec->secondary_geometry_count <= 6 && rec->selector <= 227 && t1 <= 227 && rec->normalized_coverage <= 87 && rec->geometry_percent <= 15 || rec->secondary_geometry_count <= 10 && rec->selector <= 230 && t1 <= 220 && rec->normalized_coverage <= 91 && (rec->geometry_percent <= 20 || rec->secondary_geometry_count <= 6 && rec->selector <= 227 && t1 <= 227 && rec->normalized_coverage <= 87 && rec->geometry_percent <= 15)))
+          else if (rec->geometry_count <= 5 && (((rec->secondary_geometry_count > 10 || rec->selector > 230 || t1 > 220 || rec->normalized_coverage > 91) && rec->secondary_geometry_count <= 6 && rec->selector <= 227 && t1 <= 227 && rec->normalized_coverage <= 87 && rec->geometry_percent <= 15) || (rec->secondary_geometry_count <= 10 && rec->selector <= 230 && t1 <= 220 && rec->normalized_coverage <= 91 && (rec->geometry_percent <= 20 || (rec->secondary_geometry_count <= 6 && rec->selector <= 227 && t1 <= 227 && rec->normalized_coverage <= 87 && rec->geometry_percent <= 15)))))
             *conf = 0;
         }
       if (rec->geometry_count <= 9 && rec->secondary_geometry_count <= 13 && rec->normalized_coverage <= 111 && rec->geometry_percent <= 23 && t1 <= 213 && t0 <= 192)
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->geometry_count <= 12 && rec->secondary_geometry_count <= 18 && t1 <= 200 && t0 <= 196 && rec->normalized_coverage <= 98 && rec->geometry_percent <= 42)
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
-      else if (rec->geometry_count <= 10 && ((t1 > 215 || t0 > 198 || rec->normalized_coverage > 110) && t1 <= 205 && t0 <= 196 && rec->normalized_coverage <= 112 && rec->geometry_percent <= 24 || t1 <= 215 && t0 <= 198 && rec->normalized_coverage <= 110 && (rec->geometry_percent <= 12 || t1 <= 205 && t0 <= 196 && rec->normalized_coverage <= 112 && rec->geometry_percent <= 24)))
+      else if (rec->geometry_count <= 10 && (((t1 > 215 || t0 > 198 || rec->normalized_coverage > 110) && t1 <= 205 && t0 <= 196 && rec->normalized_coverage <= 112 && rec->geometry_percent <= 24) || (t1 <= 215 && t0 <= 198 && rec->normalized_coverage <= 110 && (rec->geometry_percent <= 12 || (t1 <= 205 && t0 <= 196 && rec->normalized_coverage <= 112 && rec->geometry_percent <= 24)))))
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->secondary_geometry_count <= 14 && rec->selector <= 224 && t1 <= 211 && t0 <= 197 && rec->normalized_coverage <= 80 && rec->geometry_percent <= 33)
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->geometry_count <= 12 && t1 <= 204 && t0 <= 189 && rec->normalized_coverage <= 124 && rec->geometry_percent <= 22)
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
-      else if (rec->geometry_count <= 11 && ((rec->secondary_geometry_count > 16 || t1 > 212 || t0 > 178 || rec->normalized_coverage > 116) && rec->secondary_geometry_count <= 18 && t1 <= 196 && t0 <= 170 && rec->normalized_coverage <= 127 && rec->geometry_percent <= 24 || rec->secondary_geometry_count <= 16 && t1 <= 212 && t0 <= 178 && rec->normalized_coverage <= 116 && (rec->geometry_percent <= 24 || rec->secondary_geometry_count <= 18 && t1 <= 196 && t0 <= 170 && rec->normalized_coverage <= 127 && rec->geometry_percent <= 24)))
+      else if (rec->geometry_count <= 11 && (((rec->secondary_geometry_count > 16 || t1 > 212 || t0 > 178 || rec->normalized_coverage > 116) && rec->secondary_geometry_count <= 18 && t1 <= 196 && t0 <= 170 && rec->normalized_coverage <= 127 && rec->geometry_percent <= 24) || (rec->secondary_geometry_count <= 16 && t1 <= 212 && t0 <= 178 && rec->normalized_coverage <= 116 && (rec->geometry_percent <= 24 || (rec->secondary_geometry_count <= 18 && t1 <= 196 && t0 <= 170 && rec->normalized_coverage <= 127 && rec->geometry_percent <= 24)))))
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
-      else if (rec->geometry_count <= 13 && rec->secondary_geometry_count <= 16 && ((t1 > 194 || t0 > 188 || rec->normalized_coverage > 86) && t1 <= 196 && t0 <= 167 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 31 || t1 <= 194 && t0 <= 188 && rec->normalized_coverage <= 86 && (rec->geometry_percent <= 43 || t1 <= 196 && t0 <= 167 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 31)))
+      else if (rec->geometry_count <= 13 && rec->secondary_geometry_count <= 16 && (((t1 > 194 || t0 > 188 || rec->normalized_coverage > 86) && t1 <= 196 && t0 <= 167 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 31) || (t1 <= 194 && t0 <= 188 && rec->normalized_coverage <= 86 && (rec->geometry_percent <= 43 || (t1 <= 196 && t0 <= 167 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 31)))))
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->geometry_count <= 14 && rec->secondary_geometry_count <= 16 && t1 <= 203 && t0 <= 152 && rec->normalized_coverage <= 93 && rec->geometry_percent <= 30)
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->geometry_count <= 13 && rec->secondary_geometry_count <= 15 && t1 <= 205 && t0 <= 187 && rec->normalized_coverage <= 164 && rec->geometry_percent <= 12)
         {
           *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->geometry_count > 9)
         {
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
       else if (rec->secondary_geometry_count <= 10)
         {
           if (t1 <= 215 && t0 <= 199 && rec->normalized_coverage <= 110 && rec->geometry_percent <= 18)
             *conf = 0;
-          if (rec->secondary_geometry_count <= 10 && ((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11 || t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))
+          if (rec->secondary_geometry_count <= 10 && (((t1 > 209 || t0 > 190) && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11) || (t1 <= 209 && t0 <= 190 && (rec->geometry_percent <= 14 || (t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 128 && rec->geometry_percent <= 11)))))
             *conf = 0;
         }
-      if (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 11 && ((t1 > 224 || rec->normalized_coverage > 117) && t1 <= 217 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 12 || t1 <= 224 && rec->normalized_coverage <= 117 && (rec->geometry_percent <= 20 || t1 <= 217 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 12)))
+      if (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 11 && (((t1 > 224 || rec->normalized_coverage > 117) && t1 <= 217 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 12) || (t1 <= 224 && rec->normalized_coverage <= 117 && (rec->geometry_percent <= 20 || (t1 <= 217 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 12)))))
         *conf = 0;
       else if (rec->geometry_count <= 5 && rec->secondary_geometry_count <= 11 && t1 <= 218 && rec->normalized_coverage <= 120 && rec->geometry_percent <= 16)
         *conf = 0;
@@ -2454,7 +2459,7 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
         *conf = 0;
       else if (rec->geometry_count <= 6 && rec->secondary_geometry_count <= 11 && rec->selector <= 224 && t1 <= 223 && t0 <= 211 && rec->matched_percent <= 51)
         *conf = 0;
-      else if (rec->geometry_count <= 10 && ((rec->secondary_geometry_count > 14 || t1 > 210 || t0 > 186) && rec->secondary_geometry_count <= 15 && t1 <= 210 && rec->matched_percent <= 60 && t2 <= 390 || rec->secondary_geometry_count <= 14 && t1 <= 210 && t0 <= 186 && (rec->normalized_coverage <= 111 || rec->secondary_geometry_count <= 15 && t1 <= 210 && rec->matched_percent <= 60 && t2 <= 390)))
+      else if (rec->geometry_count <= 10 && (((rec->secondary_geometry_count > 14 || t1 > 210 || t0 > 186) && rec->secondary_geometry_count <= 15 && t1 <= 210 && rec->matched_percent <= 60 && t2 <= 390) || (rec->secondary_geometry_count <= 14 && t1 <= 210 && t0 <= 186 && (rec->normalized_coverage <= 111 || (rec->secondary_geometry_count <= 15 && t1 <= 210 && rec->matched_percent <= 60 && t2 <= 390)))))
         *conf = 0;
       else if (rec->geometry_count <= 9 && rec->secondary_geometry_count <= 15 && t1 <= 208 && rec->matched_percent <= 50 && t0 <= 205 && rec->geometry_percent <= 30)
         *conf = 0;
@@ -2468,7 +2473,7 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
         *conf = 0;
       else if (rec->geometry_count <= 9 && t1 <= 200 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 27)
         *conf = 0;
-      else if (rec->geometry_count > 11 && rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100 || rec->geometry_count <= 11 && ((t1 > 209 || t0 > 165) && ((t1 > 196 || t0 > 177 || rec->normalized_coverage > 112) && rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100 || t1 <= 196 && t0 <= 177 && rec->normalized_coverage <= 112 && (rec->geometry_percent <= 27 || rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100)) || t1 <= 209 && t0 <= 165 && (rec->normalized_coverage <= 75 || (t1 > 196 || t0 > 177 || rec->normalized_coverage > 112) && rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100 || t1 <= 196 && t0 <= 177 && rec->normalized_coverage <= 112 && (rec->geometry_percent <= 27 || rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100))))
+      else if ((rec->geometry_count > 11 && rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100) || (rec->geometry_count <= 11 && (((t1 > 209 || t0 > 165) && (((t1 > 196 || t0 > 177 || rec->normalized_coverage > 112) && rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100) || (t1 <= 196 && t0 <= 177 && rec->normalized_coverage <= 112 && (rec->geometry_percent <= 27 || (rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100))))) || (t1 <= 209 && t0 <= 165 && (rec->normalized_coverage <= 75 || ((t1 > 196 || t0 > 177 || rec->normalized_coverage > 112) && rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100) || (t1 <= 196 && t0 <= 177 && rec->normalized_coverage <= 112 && (rec->geometry_percent <= 27 || (rec->secondary_geometry_count <= 13 && t1 <= 209 && t0 <= 187 && rec->normalized_coverage <= 100))))))))
         *conf = 0;
       else if (rec->geometry_count <= 6 && rec->selector <= 232 && t1 <= 219 && rec->normalized_coverage <= 111 && rec->geometry_percent <= 23)
         *conf = 0;
@@ -2484,7 +2489,7 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
         *conf = 0;
       else if (rec->geometry_count <= 7 && rec->selector <= 224 && t1 <= 219 && t0 <= 213 && rec->normalized_coverage <= 74 && rec->geometry_percent < 27)
         *conf = 0;
-      else if ((rec->geometry_count > 6 || rec->selector > 226 || t1 > 222 || t0 > 225 || rec->normalized_coverage > 68) && rec->geometry_count <= 8 && t1 <= 209 && rec->normalized_coverage <= 105 && rec->geometry_percent <= 25 || rec->geometry_count <= 6 && rec->selector <= 226 && t1 <= 222 && t0 <= 225 && rec->normalized_coverage <= 68 && (rec->geometry_percent < 30 || rec->geometry_count <= 8 && t1 <= 209 && rec->normalized_coverage <= 105 && rec->geometry_percent <= 25))
+      else if (((rec->geometry_count > 6 || rec->selector > 226 || t1 > 222 || t0 > 225 || rec->normalized_coverage > 68) && rec->geometry_count <= 8 && t1 <= 209 && rec->normalized_coverage <= 105 && rec->geometry_percent <= 25) || (rec->geometry_count <= 6 && rec->selector <= 226 && t1 <= 222 && t0 <= 225 && rec->normalized_coverage <= 68 && (rec->geometry_percent < 30 || (rec->geometry_count <= 8 && t1 <= 209 && rec->normalized_coverage <= 105 && rec->geometry_percent <= 25))))
         *conf = 0;
       if (rec->secondary_geometry_count <= 14 && t0 <= 168 && rec->normalized_coverage <= 80)
         *conf = 0;
@@ -2492,13 +2497,13 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
         *conf = 0;
       if (rec->geometry_count < rec->secondary_geometry_count)
         {
-          if ((rec->geometry_count > 9 || rec->secondary_geometry_count > 15 || rec->selector > 228 || t1 > 211 || rec->normalized_coverage > 121) && rec->geometry_count <= 10 && t1 <= 209 && t0 <= 190 && rec->normalized_coverage <= 100 && rec->geometry_percent <= 21 || rec->geometry_count <= 9 && rec->secondary_geometry_count <= 15 && rec->selector <= 228 && t1 <= 211 && rec->normalized_coverage <= 121 && (rec->geometry_percent <= 18 || rec->geometry_count <= 10 && t1 <= 209 && t0 <= 190 && rec->normalized_coverage <= 100 && rec->geometry_percent <= 21))
+          if (((rec->geometry_count > 9 || rec->secondary_geometry_count > 15 || rec->selector > 228 || t1 > 211 || rec->normalized_coverage > 121) && rec->geometry_count <= 10 && t1 <= 209 && t0 <= 190 && rec->normalized_coverage <= 100 && rec->geometry_percent <= 21) || (rec->geometry_count <= 9 && rec->secondary_geometry_count <= 15 && rec->selector <= 228 && t1 <= 211 && rec->normalized_coverage <= 121 && (rec->geometry_percent <= 18 || (rec->geometry_count <= 10 && t1 <= 209 && t0 <= 190 && rec->normalized_coverage <= 100 && rec->geometry_percent <= 21))))
             *conf = 0;
-          else if (rec->geometry_count <= 11 && ((rec->selector > 225 || t1 > 206 || t0 > 196 || rec->normalized_coverage > 100) && t1 <= 201 && t0 <= 180 && rec->normalized_coverage <= 95 && rec->matched_percent <= 45 || rec->selector <= 225 && t1 <= 206 && t0 <= 196 && rec->normalized_coverage <= 100 && (rec->geometry_percent <= 23 || t1 <= 201 && t0 <= 180 && rec->normalized_coverage <= 95 && rec->matched_percent <= 45)))
+          else if (rec->geometry_count <= 11 && (((rec->selector > 225 || t1 > 206 || t0 > 196 || rec->normalized_coverage > 100) && t1 <= 201 && t0 <= 180 && rec->normalized_coverage <= 95 && rec->matched_percent <= 45) || (rec->selector <= 225 && t1 <= 206 && t0 <= 196 && rec->normalized_coverage <= 100 && (rec->geometry_percent <= 23 || (t1 <= 201 && t0 <= 180 && rec->normalized_coverage <= 95 && rec->matched_percent <= 45)))))
             *conf = 0;
           else if (rec->geometry_count <= 13 && rec->secondary_geometry_count <= 17 && t1 <= 208 && t0 <= 201 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 20)
             *conf = 0;
-          else if (rec->geometry_count > 9 && rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21 || rec->geometry_count <= 9 && ((rec->secondary_geometry_count > 13 || t1 > 212 || t0 > 199 || rec->normalized_coverage > 121) && ((rec->secondary_geometry_count > 14 || t1 > 217 || t0 > 195 || rec->normalized_coverage > 78) && rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21 || rec->secondary_geometry_count <= 14 && t1 <= 217 && t0 <= 195 && rec->normalized_coverage <= 78 && (rec->geometry_percent <= 19 || rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21)) || rec->secondary_geometry_count <= 13 && t1 <= 212 && t0 <= 199 && rec->normalized_coverage <= 121 && (rec->geometry_percent <= 18 || (rec->secondary_geometry_count > 14 || t1 > 217 || t0 > 195 || rec->normalized_coverage > 78) && rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21 || rec->secondary_geometry_count <= 14 && t1 <= 217 && t0 <= 195 && rec->normalized_coverage <= 78 && (rec->geometry_percent <= 19 || rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21))))
+          else if ((FALSE /* never: geometry_count > 9 && geometry_count <= 8 */ && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21) || (rec->geometry_count <= 9 && (((rec->secondary_geometry_count > 13 || t1 > 212 || t0 > 199 || rec->normalized_coverage > 121) && (((rec->secondary_geometry_count > 14 || t1 > 217 || t0 > 195 || rec->normalized_coverage > 78) && rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21) || (rec->secondary_geometry_count <= 14 && t1 <= 217 && t0 <= 195 && rec->normalized_coverage <= 78 && (rec->geometry_percent <= 19 || (rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21))))) || (rec->secondary_geometry_count <= 13 && t1 <= 212 && t0 <= 199 && rec->normalized_coverage <= 121 && (rec->geometry_percent <= 18 || ((rec->secondary_geometry_count > 14 || t1 > 217 || t0 > 195 || rec->normalized_coverage > 78) && rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21) || (rec->secondary_geometry_count <= 14 && t1 <= 217 && t0 <= 195 && rec->normalized_coverage <= 78 && (rec->geometry_percent <= 19 || (rec->geometry_count <= 8 && t1 <= 203 && t0 <= 195 && rec->normalized_coverage <= 135 && rec->geometry_percent <= 21))))))))
             *conf = 0;
           else if (rec->geometry_count <= 10 && rec->secondary_geometry_count <= 16 && t1 <= 205 && t0 <= 200 && rec->normalized_coverage <= 106 && rec->geometry_percent <= 26)
             *conf = 0;
@@ -2512,7 +2517,7 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
             *conf = 0;
           else if (rec->geometry_count <= 10 && t1 <= 207 && t0 <= 198 && rec->normalized_coverage <= 105 && rec->geometry_percent <= 26)
             *conf = 0;
-          if (t2 <= 388 && t1 <= 201 && (rec->secondary_geometry_count > 16 && (rec->geometry_count > 11 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15 || rec->geometry_count <= 11 && ((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && (rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15 || rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15)) || rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15 || rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15)))) || rec->secondary_geometry_count <= 16 && (rec->geometry_percent <= 15 || rec->geometry_count > 11 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15 || rec->geometry_count <= 11 && ((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && (rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15 || rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15)) || rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15 || rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15))))))
+          if (t2 <= 388 && t1 <= 201 && ((rec->secondary_geometry_count > 16 && ((rec->geometry_count > 11 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15) || (rec->geometry_count <= 11 && (((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && ((rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15) || (rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || (rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15))))) || (rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || (rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15) || (rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || (rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15))))))))) || (rec->secondary_geometry_count <= 16 && (rec->geometry_percent <= 15 || (rec->geometry_count > 11 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15) || (rec->geometry_count <= 11 && (((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && ((rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15) || (rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || (rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15))))) || (rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || (rec->matched_percent > 40 && rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15) || (rec->matched_percent <= 40 && (rec->geometry_percent <= 17 || (rec->geometry_count <= 13 && t1 <= 205 && rec->normalized_coverage <= 115 && rec->geometry_percent <= 15)))))))))))
             *conf = 0;
         }
       if (rec->geometry_count <= 4 && t0 <= 202 && rec->normalized_coverage <= 107 && rec->geometry_percent <= 20)
@@ -2527,9 +2532,9 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
         *conf = 0;
       else if (rec->secondary_geometry_count <= 15 && t1 <= 201 && t0 <= 191 && rec->normalized_coverage <= 106 && rec->matched_percent <= 44 && rec->geometry_percent <= 20)
         *conf = 0;
-      else if (rec->geometry_count <= 11 && ((rec->secondary_geometry_count > 13 || t1 > 215 || t0 > 185 || rec->normalized_coverage > 90) && t1 <= 207 && t0 <= 185 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 30 || rec->secondary_geometry_count <= 13 && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 90 && (rec->geometry_percent <= 30 || t1 <= 207 && t0 <= 185 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 30)))
+      else if (rec->geometry_count <= 11 && (((rec->secondary_geometry_count > 13 || t1 > 215 || t0 > 185 || rec->normalized_coverage > 90) && t1 <= 207 && t0 <= 185 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 30) || (rec->secondary_geometry_count <= 13 && t1 <= 215 && t0 <= 185 && rec->normalized_coverage <= 90 && (rec->geometry_percent <= 30 || (t1 <= 207 && t0 <= 185 && rec->normalized_coverage <= 95 && rec->geometry_percent <= 30)))))
         *conf = 0;
-      if (rec->geometry_count < rec->secondary_geometry_count && rec->selector == 128 && ((rec->geometry_count > 12 || t0 > 165) && rec->secondary_geometry_count <= 14 && t2 <= 400 && rec->geometry_percent <= 10 || rec->geometry_count <= 12 && t0 <= 165 && (rec->geometry_percent <= 10 || rec->secondary_geometry_count <= 14 && t2 <= 400 && rec->geometry_percent <= 10)))
+      if (rec->geometry_count < rec->secondary_geometry_count && rec->selector == 128 && (((rec->geometry_count > 12 || t0 > 165) && rec->secondary_geometry_count <= 14 && t2 <= 400 && rec->geometry_percent <= 10) || (rec->geometry_count <= 12 && t0 <= 165 && (rec->geometry_percent <= 10 || (rec->secondary_geometry_count <= 14 && t2 <= 400 && rec->geometry_percent <= 10)))))
         *conf = 0;
       else if (*conf != 0)
         {
@@ -2573,9 +2578,9 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
         *conf = 0;
       else if (rec->normalized_coverage < 77 && t2 < 419 && rec->geometry_count < 12 && rec->geometry_percent < 42)
         *conf = 0;
-      else if (rec->normalized_coverage < 80 && ((t2 > 435 || rec->geometry_count >= 11) && t2 < 395 && rec->geometry_count < 12 && rec->geometry_percent < 48 || t2 <= 435 && rec->geometry_count < 11 && (rec->geometry_percent < 35 || t2 < 395 && rec->geometry_count < 12 && rec->geometry_percent < 48)))
+      else if (rec->normalized_coverage < 80 && (((t2 > 435 || rec->geometry_count >= 11) && t2 < 395 && rec->geometry_count < 12 && rec->geometry_percent < 48) || (t2 <= 435 && rec->geometry_count < 11 && (rec->geometry_percent < 35 || (t2 < 395 && rec->geometry_count < 12 && rec->geometry_percent < 48)))))
         *conf = 0;
-      else if (rec->normalized_coverage < 100 && ((t2 >= 430 || rec->geometry_count > 12) && t2 < 432 && rec->geometry_count <= 12 && rec->geometry_percent < 20 || t2 < 430 && rec->geometry_count <= 12 && (rec->geometry_percent < 32 || t2 < 432 && rec->geometry_count <= 12 && rec->geometry_percent < 20)))
+      else if (rec->normalized_coverage < 100 && (((t2 >= 430 || rec->geometry_count > 12) && t2 < 432 && rec->geometry_count <= 12 && rec->geometry_percent < 20) || (t2 < 430 && rec->geometry_count <= 12 && (rec->geometry_percent < 32 || (t2 < 432 && rec->geometry_count <= 12 && rec->geometry_percent < 20)))))
         *conf = 0;
       else if (rec->normalized_coverage < 93 && t2 < 419 && rec->geometry_count <= 12 && rec->geometry_percent <= 35)
         *conf = 0;
@@ -2588,107 +2593,107 @@ match_reeval_conf_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint32 
           const gboolean b3_0 = rec->geometry_percent < 20;
           const gboolean b3_1 = rec->normalized_coverage < 128 && t2 < 415 && rec->secondary_geometry_count < 10 && b3_0;
           const gboolean b3_2 = rec->geometry_percent < 35 || b3_1;
-          const gboolean b3_3 = (rec->normalized_coverage >= 110 || t2 >= 395 || rec->secondary_geometry_count >= 15) && b3_1 || rec->normalized_coverage < 110 && t2 < 395 && rec->secondary_geometry_count < 15 && b3_2;
+          const gboolean b3_3 = ((rec->normalized_coverage >= 110 || t2 >= 395 || rec->secondary_geometry_count >= 15) && b3_1) || (rec->normalized_coverage < 110 && t2 < 395 && rec->secondary_geometry_count < 15 && b3_2);
           const gboolean b3_4 = rec->geometry_percent < 25 || b3_3;
-          const gboolean b3_5 = (t2 >= 405 || rec->secondary_geometry_count >= 13) && b3_3 || t2 < 405 && rec->secondary_geometry_count < 13 && b3_4;
+          const gboolean b3_5 = ((t2 >= 405 || rec->secondary_geometry_count >= 13) && b3_3) || (t2 < 405 && rec->secondary_geometry_count < 13 && b3_4);
           const gboolean b3_6 = rec->geometry_percent < 20 || b3_5;
-          const gboolean b3_7 = (t2 >= 400 || rec->secondary_geometry_count >= 16) && b3_5 || t2 < 400 && rec->secondary_geometry_count < 16 && b3_6;
+          const gboolean b3_7 = ((t2 >= 400 || rec->secondary_geometry_count >= 16) && b3_5) || (t2 < 400 && rec->secondary_geometry_count < 16 && b3_6);
           const gboolean b3_8 = rec->geometry_percent < 30 || b3_7;
-          const gboolean b3_9 = (t2 >= 385 || rec->secondary_geometry_count >= 15) && b3_7 || t2 < 385 && rec->secondary_geometry_count < 15 && b3_8;
-          if (rec->normalized_coverage >= 128 && b3_3 || rec->normalized_coverage < 128 && ((t2 >= 400 || rec->secondary_geometry_count >= 15) && b3_9 || t2 < 400 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b3_9)))
+          const gboolean b3_9 = ((t2 >= 385 || rec->secondary_geometry_count >= 15) && b3_7) || (t2 < 385 && rec->secondary_geometry_count < 15 && b3_8);
+          if ((rec->normalized_coverage >= 128 && b3_3) || (rec->normalized_coverage < 128 && (((t2 >= 400 || rec->secondary_geometry_count >= 15) && b3_9) || (t2 < 400 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b3_9)))))
             *conf = 0;
           else if (rec->normalized_coverage < 65 && t2 < 420 && rec->geometry_count <= 12 && t1 <= 211 && rec->geometry_percent < 40)
             *conf = 0;
         }
-      if (t3 > 120 && ((rec->normalized_coverage >= 90 || rec->geometry_count >= 11 || rec->secondary_geometry_count >= 21 || t2 >= 395) && rec->normalized_coverage < 80 && rec->geometry_count < 12 && rec->secondary_geometry_count < 20 && t2 < 400 && rec->geometry_percent < 45 || rec->normalized_coverage < 90 && rec->geometry_count < 11 && rec->secondary_geometry_count < 21 && t2 < 395 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && rec->geometry_count < 12 && rec->secondary_geometry_count < 20 && t2 < 400 && rec->geometry_percent < 45)))
+      if (t3 > 120 && (((rec->normalized_coverage >= 90 || rec->geometry_count >= 11 || rec->secondary_geometry_count >= 21 || t2 >= 395) && rec->normalized_coverage < 80 && rec->geometry_count < 12 && rec->secondary_geometry_count < 20 && t2 < 400 && rec->geometry_percent < 45) || (rec->normalized_coverage < 90 && rec->geometry_count < 11 && rec->secondary_geometry_count < 21 && t2 < 395 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && rec->geometry_count < 12 && rec->secondary_geometry_count < 20 && t2 < 400 && rec->geometry_percent < 45)))))
         *conf = 0;
-      if (t3 > 130 && ((rec->normalized_coverage >= 120 || rec->geometry_count >= 13 || rec->secondary_geometry_count >= 20 || t2 >= 408) && rec->normalized_coverage < 80 && rec->geometry_count < 11 && rec->secondary_geometry_count < 15 && t2 < 408 && rec->geometry_percent < 35 || rec->normalized_coverage < 120 && rec->geometry_count < 13 && rec->secondary_geometry_count < 20 && t2 < 408 && (rec->geometry_percent < 25 || rec->normalized_coverage < 80 && rec->geometry_count < 11 && rec->secondary_geometry_count < 15 && t2 < 408 && rec->geometry_percent < 35)))
+      if (t3 > 130 && (((rec->normalized_coverage >= 120 || rec->geometry_count >= 13 || rec->secondary_geometry_count >= 20 || t2 >= 408) && rec->normalized_coverage < 80 && rec->geometry_count < 11 && rec->secondary_geometry_count < 15 && t2 < 408 && rec->geometry_percent < 35) || (rec->normalized_coverage < 120 && rec->geometry_count < 13 && rec->secondary_geometry_count < 20 && t2 < 408 && (rec->geometry_percent < 25 || (rec->normalized_coverage < 80 && rec->geometry_count < 11 && rec->secondary_geometry_count < 15 && t2 < 408 && rec->geometry_percent < 35)))))
         *conf = 0;
       const gboolean b4_0 = rec->normalized_coverage < 55 && rec->geometry_count < 12 && rec->secondary_geometry_count < 17 && t2 < 425 && rec->geometry_percent < 45;
       const gboolean b4_1 = rec->geometry_percent < 45 || b4_0;
-      const gboolean b4_2 = (rec->normalized_coverage >= 70 || rec->geometry_count >= 16 || rec->secondary_geometry_count >= 20 || t2 >= 405) && b4_0 || rec->normalized_coverage < 70 && rec->geometry_count < 16 && rec->secondary_geometry_count < 20 && t2 < 405 && b4_1;
+      const gboolean b4_2 = ((rec->normalized_coverage >= 70 || rec->geometry_count >= 16 || rec->secondary_geometry_count >= 20 || t2 >= 405) && b4_0) || (rec->normalized_coverage < 70 && rec->geometry_count < 16 && rec->secondary_geometry_count < 20 && t2 < 405 && b4_1);
       const gboolean b4_3 = rec->geometry_percent < 35 || b4_2;
-      const gboolean b4_4 = (rec->normalized_coverage >= 80 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 16 || t2 >= 415) && b4_2 || rec->normalized_coverage < 80 && rec->geometry_count < 12 && rec->secondary_geometry_count < 16 && t2 < 415 && b4_3;
+      const gboolean b4_4 = ((rec->normalized_coverage >= 80 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 16 || t2 >= 415) && b4_2) || (rec->normalized_coverage < 80 && rec->geometry_count < 12 && rec->secondary_geometry_count < 16 && t2 < 415 && b4_3);
       const gboolean b4_5 = rec->geometry_percent < 16 || b4_4;
-      const gboolean b4_6 = (rec->geometry_count >= 14 || rec->secondary_geometry_count >= 16 || t2 >= 415) && b4_4 || rec->geometry_count < 14 && rec->secondary_geometry_count < 16 && t2 < 415 && b4_5;
-      const gboolean b4_7 = (rec->geometry_count >= 16 || rec->secondary_geometry_count >= 24 || t2 >= 405) && b4_6 || rec->geometry_count < 16 && rec->secondary_geometry_count < 24 && t2 < 405 && (rec->geometry_percent < 40 || b4_6);
-      const gboolean b4_8 = rec->normalized_coverage >= 90 && b4_4 || rec->normalized_coverage < 90 && b4_7;
-      if (t3 > 145 && ((rec->normalized_coverage >= 128 || rec->geometry_count >= 19 || rec->secondary_geometry_count >= 20 || t2 >= 406) && b4_8 || rec->normalized_coverage < 128 && rec->geometry_count < 19 && rec->secondary_geometry_count < 20 && t2 < 406 && (rec->geometry_percent < 35 || b4_8)))
+      const gboolean b4_6 = ((rec->geometry_count >= 14 || rec->secondary_geometry_count >= 16 || t2 >= 415) && b4_4) || (rec->geometry_count < 14 && rec->secondary_geometry_count < 16 && t2 < 415 && b4_5);
+      const gboolean b4_7 = ((rec->geometry_count >= 16 || rec->secondary_geometry_count >= 24 || t2 >= 405) && b4_6) || (rec->geometry_count < 16 && rec->secondary_geometry_count < 24 && t2 < 405 && (rec->geometry_percent < 40 || b4_6));
+      const gboolean b4_8 = (rec->normalized_coverage >= 90 && b4_4) || (rec->normalized_coverage < 90 && b4_7);
+      if (t3 > 145 && (((rec->normalized_coverage >= 128 || rec->geometry_count >= 19 || rec->secondary_geometry_count >= 20 || t2 >= 406) && b4_8) || (rec->normalized_coverage < 128 && rec->geometry_count < 19 && rec->secondary_geometry_count < 20 && t2 < 406 && (rec->geometry_percent < 35 || b4_8))))
         *conf = 0;
       if (t3 > 155 && rec->normalized_coverage <= 50 && rec->geometry_count < 12 && rec->secondary_geometry_count < 15 && t2 < 437 && rec->geometry_percent < 46 && rec->matched_percent < 71 && t1 < 224 && rec->selector < 222)
         *conf = 0;
-      if (t3 > 160 && ((rec->normalized_coverage >= 50 || rec->secondary_geometry_count >= 10) && (rec->normalized_coverage >= 85 && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40 || rec->normalized_coverage < 85 && ((rec->geometry_count >= 9 || rec->secondary_geometry_count >= 13) && ((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40 || rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40)) || rec->geometry_count < 9 && rec->secondary_geometry_count < 13 && (t2 < 440 || (rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40 || rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40)))) || rec->normalized_coverage < 50 && rec->secondary_geometry_count < 10 && (t2 < 450 || rec->normalized_coverage >= 85 && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40 || rec->normalized_coverage < 85 && ((rec->geometry_count >= 9 || rec->secondary_geometry_count >= 13) && ((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40 || rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40)) || rec->geometry_count < 9 && rec->secondary_geometry_count < 13 && (t2 < 440 || (rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40 || rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40))))))
+      if (t3 > 160 && (((rec->normalized_coverage >= 50 || rec->secondary_geometry_count >= 10) && ((FALSE /* never: normalized_coverage >= 85 && normalized_coverage < 80 */ && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40) || (rec->normalized_coverage < 85 && (((rec->geometry_count >= 9 || rec->secondary_geometry_count >= 13) && (((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40) || (rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40))))) || (rec->geometry_count < 9 && rec->secondary_geometry_count < 13 && (t2 < 440 || ((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40) || (rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40))))))))) || (rec->normalized_coverage < 50 && rec->secondary_geometry_count < 10 && (t2 < 450 || (FALSE /* never: normalized_coverage >= 85 && normalized_coverage < 80 */ && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40) || (rec->normalized_coverage < 85 && (((rec->geometry_count >= 9 || rec->secondary_geometry_count >= 13) && (((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40) || (rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40))))) || (rec->geometry_count < 9 && rec->secondary_geometry_count < 13 && (t2 < 440 || ((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 21 || t2 >= 415) && rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40) || (rec->geometry_count < 13 && rec->secondary_geometry_count < 21 && t2 < 415 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 418 && rec->geometry_percent < 40)))))))))))
         *conf = 0;
       const gboolean b5_0 = rec->normalized_coverage < 45 && rec->geometry_count < 6 && rec->secondary_geometry_count < 10 && t2 < 455 && rec->geometry_percent < 40;
       const gboolean b5_1 = t2 < 450 || b5_0;
-      const gboolean b5_2 = (rec->normalized_coverage >= 50 || rec->secondary_geometry_count >= 10) && b5_0 || rec->normalized_coverage < 50 && rec->secondary_geometry_count < 10 && b5_1;
+      const gboolean b5_2 = ((rec->normalized_coverage >= 50 || rec->secondary_geometry_count >= 10) && b5_0) || (rec->normalized_coverage < 50 && rec->secondary_geometry_count < 10 && b5_1);
       const gboolean b5_3 = rec->geometry_percent < 35 || b5_2;
-      const gboolean b5_4 = (rec->normalized_coverage > 75 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 19 || t2 >= 446) && b5_2 || rec->normalized_coverage <= 75 && rec->geometry_count < 14 && rec->secondary_geometry_count < 19 && t2 < 446 && b5_3;
+      const gboolean b5_4 = ((rec->normalized_coverage > 75 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 19 || t2 >= 446) && b5_2) || (rec->normalized_coverage <= 75 && rec->geometry_count < 14 && rec->secondary_geometry_count < 19 && t2 < 446 && b5_3);
       const gboolean b5_5 = t2 < 440 || b5_4;
-      const gboolean b5_6 = (rec->geometry_count >= 9 || rec->secondary_geometry_count >= 13) && b5_4 || rec->geometry_count < 9 && rec->secondary_geometry_count < 13 && b5_5;
-      const gboolean b5_7 = (rec->geometry_count >= 14 || rec->secondary_geometry_count >= 18 || t2 >= 423) && b5_6 || rec->geometry_count < 14 && rec->secondary_geometry_count < 18 && t2 < 423 && (rec->geometry_percent < 46 || b5_6);
-      const gboolean b5_8 = rec->normalized_coverage >= 85 && b5_4 || rec->normalized_coverage < 85 && b5_7;
+      const gboolean b5_6 = ((rec->geometry_count >= 9 || rec->secondary_geometry_count >= 13) && b5_4) || (rec->geometry_count < 9 && rec->secondary_geometry_count < 13 && b5_5);
+      const gboolean b5_7 = ((rec->geometry_count >= 14 || rec->secondary_geometry_count >= 18 || t2 >= 423) && b5_6) || (rec->geometry_count < 14 && rec->secondary_geometry_count < 18 && t2 < 423 && (rec->geometry_percent < 46 || b5_6));
+      const gboolean b5_8 = (rec->normalized_coverage >= 85 && b5_4) || (rec->normalized_coverage < 85 && b5_7);
       const gboolean b5_9 = rec->geometry_percent < 25 || b5_8;
-      const gboolean b5_10 = (rec->normalized_coverage >= 90 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 10 || t2 >= 436) && b5_8 || rec->normalized_coverage < 90 && rec->geometry_count < 7 && rec->secondary_geometry_count < 10 && t2 < 436 && b5_9;
+      const gboolean b5_10 = ((rec->normalized_coverage >= 90 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 10 || t2 >= 436) && b5_8) || (rec->normalized_coverage < 90 && rec->geometry_count < 7 && rec->secondary_geometry_count < 10 && t2 < 436 && b5_9);
       const gboolean b5_11 = rec->geometry_percent < 40 || b5_10;
-      const gboolean b5_12 = (rec->normalized_coverage >= 95 || rec->geometry_count >= 13 || rec->secondary_geometry_count >= 18 || t2 >= 415) && b5_10 || rec->normalized_coverage < 95 && rec->geometry_count < 13 && rec->secondary_geometry_count < 18 && t2 < 415 && b5_11;
+      const gboolean b5_12 = ((rec->normalized_coverage >= 95 || rec->geometry_count >= 13 || rec->secondary_geometry_count >= 18 || t2 >= 415) && b5_10) || (rec->normalized_coverage < 95 && rec->geometry_count < 13 && rec->secondary_geometry_count < 18 && t2 < 415 && b5_11);
       const gboolean b5_13 = rec->geometry_percent < 46 || b5_12;
-      const gboolean b5_14 = (rec->normalized_coverage >= 100 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 23 || t2 >= 415) && b5_12 || rec->normalized_coverage < 100 && rec->geometry_count < 14 && rec->secondary_geometry_count < 23 && t2 < 415 && b5_13;
+      const gboolean b5_14 = ((rec->normalized_coverage >= 100 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 23 || t2 >= 415) && b5_12) || (rec->normalized_coverage < 100 && rec->geometry_count < 14 && rec->secondary_geometry_count < 23 && t2 < 415 && b5_13);
       const gboolean b5_15 = rec->geometry_percent < 35 || b5_14;
-      const gboolean b5_16 = (rec->normalized_coverage >= 110 || rec->geometry_count >= 16 || rec->secondary_geometry_count >= 22 || t2 >= 408) && b5_14 || rec->normalized_coverage < 110 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 408 && b5_15;
+      const gboolean b5_16 = ((rec->normalized_coverage >= 110 || rec->geometry_count >= 16 || rec->secondary_geometry_count >= 22 || t2 >= 408) && b5_14) || (rec->normalized_coverage < 110 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 408 && b5_15);
       const gboolean b5_17 = rec->geometry_percent < 20 || b5_16;
-      const gboolean b5_18 = (rec->secondary_geometry_count >= 14 || t2 >= 415) && b5_16 || rec->secondary_geometry_count < 14 && t2 < 415 && b5_17;
-      if (t3 > 165 && (rec->normalized_coverage >= 140 && b5_16 || rec->normalized_coverage < 140 && ((rec->geometry_count >= 13 || rec->secondary_geometry_count > 18 || t2 >= 425) && b5_18 || rec->geometry_count < 13 && rec->secondary_geometry_count <= 18 && t2 < 425 && (rec->geometry_percent < 25 || b5_18))))
+      const gboolean b5_18 = ((rec->secondary_geometry_count >= 14 || t2 >= 415) && b5_16) || (rec->secondary_geometry_count < 14 && t2 < 415 && b5_17);
+      if (t3 > 165 && ((rec->normalized_coverage >= 140 && b5_16) || (rec->normalized_coverage < 140 && (((rec->geometry_count >= 13 || rec->secondary_geometry_count > 18 || t2 >= 425) && b5_18) || (rec->geometry_count < 13 && rec->secondary_geometry_count <= 18 && t2 < 425 && (rec->geometry_percent < 25 || b5_18))))))
         *conf = 0;
       const gboolean b6_0 = rec->normalized_coverage < 68 && rec->geometry_count < 10 && rec->secondary_geometry_count < 12 && t2 < 456 && rec->geometry_percent < 45;
       const gboolean b6_1 = rec->geometry_percent < 40 || b6_0;
-      const gboolean b6_2 = (rec->normalized_coverage >= 70 || rec->geometry_count >= 9 || rec->secondary_geometry_count >= 11 || t2 >= 448) && b6_0 || rec->normalized_coverage < 70 && rec->geometry_count < 9 && rec->secondary_geometry_count < 11 && t2 < 448 && b6_1;
+      const gboolean b6_2 = ((rec->normalized_coverage >= 70 || rec->geometry_count >= 9 || rec->secondary_geometry_count >= 11 || t2 >= 448) && b6_0) || (rec->normalized_coverage < 70 && rec->geometry_count < 9 && rec->secondary_geometry_count < 11 && t2 < 448 && b6_1);
       const gboolean b6_3 = rec->geometry_percent < 35 || b6_2;
-      const gboolean b6_4 = (rec->normalized_coverage >= 75 || rec->geometry_count >= 8 || rec->secondary_geometry_count >= 11 || t2 >= 450) && b6_2 || rec->normalized_coverage < 75 && rec->geometry_count < 8 && rec->secondary_geometry_count < 11 && t2 < 450 && b6_3;
+      const gboolean b6_4 = ((rec->normalized_coverage >= 75 || rec->geometry_count >= 8 || rec->secondary_geometry_count >= 11 || t2 >= 450) && b6_2) || (rec->normalized_coverage < 75 && rec->geometry_count < 8 && rec->secondary_geometry_count < 11 && t2 < 450 && b6_3);
       const gboolean b6_5 = rec->geometry_percent < 40 || b6_4;
-      const gboolean b6_6 = (rec->geometry_count >= 16 || rec->secondary_geometry_count >= 22 || t2 >= 405) && b6_4 || rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 405 && b6_5;
-      const gboolean b6_7 = (rec->geometry_count >= 13 || rec->secondary_geometry_count >= 22 || t2 >= 420) && b6_6 || rec->geometry_count < 13 && rec->secondary_geometry_count < 22 && t2 < 420 && (rec->geometry_percent < 51 || b6_6);
-      const gboolean b6_8 = rec->normalized_coverage >= 80 && b6_4 || rec->normalized_coverage < 80 && b6_7;
+      const gboolean b6_6 = ((rec->geometry_count >= 16 || rec->secondary_geometry_count >= 22 || t2 >= 405) && b6_4) || (rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 405 && b6_5);
+      const gboolean b6_7 = ((rec->geometry_count >= 13 || rec->secondary_geometry_count >= 22 || t2 >= 420) && b6_6) || (rec->geometry_count < 13 && rec->secondary_geometry_count < 22 && t2 < 420 && (rec->geometry_percent < 51 || b6_6));
+      const gboolean b6_8 = (rec->normalized_coverage >= 80 && b6_4) || (rec->normalized_coverage < 80 && b6_7);
       const gboolean b6_9 = rec->geometry_percent < 35 || b6_8;
-      const gboolean b6_10 = (rec->normalized_coverage >= 85 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 14 || t2 >= 451) && b6_8 || rec->normalized_coverage < 85 && rec->geometry_count < 7 && rec->secondary_geometry_count < 14 && t2 < 451 && b6_9;
+      const gboolean b6_10 = ((rec->normalized_coverage >= 85 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 14 || t2 >= 451) && b6_8) || (rec->normalized_coverage < 85 && rec->geometry_count < 7 && rec->secondary_geometry_count < 14 && t2 < 451 && b6_9);
       const gboolean b6_11 = rec->geometry_percent < 40 || b6_10;
-      const gboolean b6_12 = (rec->normalized_coverage >= 100 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 21 || t2 >= 430) && b6_10 || rec->normalized_coverage < 100 && rec->geometry_count < 12 && rec->secondary_geometry_count < 21 && t2 < 430 && b6_11;
+      const gboolean b6_12 = ((rec->normalized_coverage >= 100 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 21 || t2 >= 430) && b6_10) || (rec->normalized_coverage < 100 && rec->geometry_count < 12 && rec->secondary_geometry_count < 21 && t2 < 430 && b6_11);
       const gboolean b6_13 = rec->matched_percent <= 46 || b6_12;
-      const gboolean b6_14 = (rec->normalized_coverage >= 85 || rec->geometry_count > 12 || rec->secondary_geometry_count > 13 || t2 >= 443 || rec->geometry_percent >= 22) && b6_12 || rec->normalized_coverage < 85 && rec->geometry_count <= 12 && rec->secondary_geometry_count <= 13 && t2 < 443 && rec->geometry_percent < 22 && b6_13;
+      const gboolean b6_14 = ((rec->normalized_coverage >= 85 || rec->geometry_count > 12 || rec->secondary_geometry_count > 13 || t2 >= 443 || rec->geometry_percent >= 22) && b6_12) || (rec->normalized_coverage < 85 && rec->geometry_count <= 12 && rec->secondary_geometry_count <= 13 && t2 < 443 && rec->geometry_percent < 22 && b6_13);
       const gboolean b6_15 = rec->geometry_percent < 28 || b6_14;
-      const gboolean b6_16 = (rec->normalized_coverage >= 100 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 16 || t2 >= 441) && b6_14 || rec->normalized_coverage < 100 && rec->geometry_count < 12 && rec->secondary_geometry_count < 16 && t2 < 441 && b6_15;
+      const gboolean b6_16 = ((rec->normalized_coverage >= 100 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 16 || t2 >= 441) && b6_14) || (rec->normalized_coverage < 100 && rec->geometry_count < 12 && rec->secondary_geometry_count < 16 && t2 < 441 && b6_15);
       const gboolean b6_17 = rec->geometry_percent < 30 || b6_16;
-      const gboolean b6_18 = (rec->normalized_coverage >= 105 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 20 || t2 >= 415) && b6_16 || rec->normalized_coverage < 105 && rec->geometry_count < 14 && rec->secondary_geometry_count < 20 && t2 < 415 && b6_17;
+      const gboolean b6_18 = ((rec->normalized_coverage >= 105 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 20 || t2 >= 415) && b6_16) || (rec->normalized_coverage < 105 && rec->geometry_count < 14 && rec->secondary_geometry_count < 20 && t2 < 415 && b6_17);
       const gboolean b6_19 = rec->geometry_percent < 20 || b6_18;
-      const gboolean b6_20 = (rec->normalized_coverage >= 110 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 12 || t2 >= 448) && b6_18 || rec->normalized_coverage < 110 && rec->geometry_count < 7 && rec->secondary_geometry_count < 12 && t2 < 448 && b6_19;
+      const gboolean b6_20 = ((rec->normalized_coverage >= 110 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 12 || t2 >= 448) && b6_18) || (rec->normalized_coverage < 110 && rec->geometry_count < 7 && rec->secondary_geometry_count < 12 && t2 < 448 && b6_19);
       const gboolean b6_21 = rec->geometry_percent < 35 || b6_20;
-      const gboolean b6_22 = (rec->normalized_coverage >= 115 || rec->geometry_count >= 13 || rec->secondary_geometry_count >= 23 || t2 >= 405) && b6_20 || rec->normalized_coverage < 115 && rec->geometry_count < 13 && rec->secondary_geometry_count < 23 && t2 < 405 && b6_21;
+      const gboolean b6_22 = ((rec->normalized_coverage >= 115 || rec->geometry_count >= 13 || rec->secondary_geometry_count >= 23 || t2 >= 405) && b6_20) || (rec->normalized_coverage < 115 && rec->geometry_count < 13 && rec->secondary_geometry_count < 23 && t2 < 405 && b6_21);
       const gboolean b6_23 = rec->geometry_percent < 25 || b6_22;
-      const gboolean b6_24 = (rec->normalized_coverage >= 120 || rec->geometry_count >= 16 || rec->secondary_geometry_count >= 22 || t2 >= 395) && b6_22 || rec->normalized_coverage < 120 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 395 && b6_23;
+      const gboolean b6_24 = ((rec->normalized_coverage >= 120 || rec->geometry_count >= 16 || rec->secondary_geometry_count >= 22 || t2 >= 395) && b6_22) || (rec->normalized_coverage < 120 && rec->geometry_count < 16 && rec->secondary_geometry_count < 22 && t2 < 395 && b6_23);
       const gboolean b6_25 = rec->geometry_percent < 40 || b6_24;
-      const gboolean b6_26 = (rec->normalized_coverage >= 125 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 21 || t2 >= 405) && b6_24 || rec->normalized_coverage < 125 && rec->geometry_count < 14 && rec->secondary_geometry_count < 21 && t2 < 405 && b6_25;
+      const gboolean b6_26 = ((rec->normalized_coverage >= 125 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 21 || t2 >= 405) && b6_24) || (rec->normalized_coverage < 125 && rec->geometry_count < 14 && rec->secondary_geometry_count < 21 && t2 < 405 && b6_25);
       const gboolean b6_27 = rec->geometry_percent < 15 || b6_26;
-      const gboolean b6_28 = (rec->normalized_coverage >= 130 || rec->geometry_count >= 8 || rec->secondary_geometry_count >= 8 || t2 >= 435) && b6_26 || rec->normalized_coverage < 130 && rec->geometry_count < 8 && rec->secondary_geometry_count < 8 && t2 < 435 && b6_27;
-      if (t3 >= 180 && ((rec->normalized_coverage >= 140 || rec->geometry_count >= 18 || rec->secondary_geometry_count >= 20 || t2 >= 436) && b6_28 || rec->normalized_coverage < 140 && rec->geometry_count < 18 && rec->secondary_geometry_count < 20 && t2 < 436 && (rec->geometry_percent < 25 || b6_28)))
+      const gboolean b6_28 = ((rec->normalized_coverage >= 130 || rec->geometry_count >= 8 || rec->secondary_geometry_count >= 8 || t2 >= 435) && b6_26) || (rec->normalized_coverage < 130 && rec->geometry_count < 8 && rec->secondary_geometry_count < 8 && t2 < 435 && b6_27);
+      if (t3 >= 180 && (((rec->normalized_coverage >= 140 || rec->geometry_count >= 18 || rec->secondary_geometry_count >= 20 || t2 >= 436) && b6_28) || (rec->normalized_coverage < 140 && rec->geometry_count < 18 && rec->secondary_geometry_count < 20 && t2 < 436 && (rec->geometry_percent < 25 || b6_28))))
         *conf = 0;
       const gboolean b7_0 = rec->normalized_coverage < 60 && rec->geometry_count < 13 && rec->secondary_geometry_count < 18 && t2 < 425 && rec->geometry_percent < 50;
       const gboolean b7_1 = rec->geometry_percent < 40 || b7_0;
-      const gboolean b7_2 = (rec->normalized_coverage >= 80 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 18 || t2 >= 435) && b7_0 || rec->normalized_coverage < 80 && rec->geometry_count < 14 && rec->secondary_geometry_count < 18 && t2 < 435 && b7_1;
+      const gboolean b7_2 = ((rec->normalized_coverage >= 80 || rec->geometry_count >= 14 || rec->secondary_geometry_count >= 18 || t2 >= 435) && b7_0) || (rec->normalized_coverage < 80 && rec->geometry_count < 14 && rec->secondary_geometry_count < 18 && t2 < 435 && b7_1);
       const gboolean b7_3 = rec->geometry_percent < 50 || b7_2;
-      const gboolean b7_4 = (rec->normalized_coverage >= 85 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 16 || t2 >= 441) && b7_2 || rec->normalized_coverage < 85 && rec->geometry_count < 12 && rec->secondary_geometry_count < 16 && t2 < 441 && b7_3;
+      const gboolean b7_4 = ((rec->normalized_coverage >= 85 || rec->geometry_count >= 12 || rec->secondary_geometry_count >= 16 || t2 >= 441) && b7_2) || (rec->normalized_coverage < 85 && rec->geometry_count < 12 && rec->secondary_geometry_count < 16 && t2 < 441 && b7_3);
       const gboolean b7_5 = rec->geometry_percent < 40 || b7_4;
-      const gboolean b7_6 = (rec->geometry_count >= 15 || rec->secondary_geometry_count >= 21 || t2 >= 400) && b7_4 || rec->geometry_count < 15 && rec->secondary_geometry_count < 21 && t2 < 400 && b7_5;
-      const gboolean b7_7 = (rec->geometry_count >= 12 || rec->secondary_geometry_count >= 14 || t2 >= 426) && b7_6 || rec->geometry_count < 12 && rec->secondary_geometry_count < 14 && t2 < 426 && (rec->geometry_percent < 30 || b7_6);
-      const gboolean b7_8 = rec->normalized_coverage >= 105 && b7_4 || rec->normalized_coverage < 105 && b7_7;
+      const gboolean b7_6 = ((rec->geometry_count >= 15 || rec->secondary_geometry_count >= 21 || t2 >= 400) && b7_4) || (rec->geometry_count < 15 && rec->secondary_geometry_count < 21 && t2 < 400 && b7_5);
+      const gboolean b7_7 = ((rec->geometry_count >= 12 || rec->secondary_geometry_count >= 14 || t2 >= 426) && b7_6) || (rec->geometry_count < 12 && rec->secondary_geometry_count < 14 && t2 < 426 && (rec->geometry_percent < 30 || b7_6));
+      const gboolean b7_8 = (rec->normalized_coverage >= 105 && b7_4) || (rec->normalized_coverage < 105 && b7_7);
       const gboolean b7_9 = rec->geometry_percent < 10 || b7_8;
-      const gboolean b7_10 = (rec->normalized_coverage >= 120 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 8 || t2 >= 440) && b7_8 || rec->normalized_coverage < 120 && rec->geometry_count < 7 && rec->secondary_geometry_count < 8 && t2 < 440 && b7_9;
-      if (t3 > 190 && ((rec->normalized_coverage >= 135 || rec->geometry_count >= 11 || rec->secondary_geometry_count >= 14 || t2 >= 435) && b7_10 || rec->normalized_coverage < 135 && rec->geometry_count < 11 && rec->secondary_geometry_count < 14 && t2 < 435 && (rec->geometry_percent < 25 || b7_10)))
+      const gboolean b7_10 = ((rec->normalized_coverage >= 120 || rec->geometry_count >= 7 || rec->secondary_geometry_count >= 8 || t2 >= 440) && b7_8) || (rec->normalized_coverage < 120 && rec->geometry_count < 7 && rec->secondary_geometry_count < 8 && t2 < 440 && b7_9);
+      if (t3 > 190 && (((rec->normalized_coverage >= 135 || rec->geometry_count >= 11 || rec->secondary_geometry_count >= 14 || t2 >= 435) && b7_10) || (rec->normalized_coverage < 135 && rec->geometry_count < 11 && rec->secondary_geometry_count < 14 && t2 < 435 && (rec->geometry_percent < 25 || b7_10))))
         *conf = 0;
-      if (rec->normalized_coverage < 70 && (rec->secondary_geometry_count >= 13 && rec->secondary_geometry_count < 18 && t2 < 416 || rec->secondary_geometry_count < 13 && (t2 < 444 || rec->secondary_geometry_count < 18 && t2 < 416)))
+      if (rec->normalized_coverage < 70 && ((rec->secondary_geometry_count >= 13 && rec->secondary_geometry_count < 18 && t2 < 416) || (rec->secondary_geometry_count < 13 && (t2 < 444 || (rec->secondary_geometry_count < 18 && t2 < 416)))))
         *conf = 0;
       else if (rec->normalized_coverage < 65 && rec->secondary_geometry_count < 19 && t2 < 408)
         *conf = 0;
-      else if ((rec->normalized_coverage >= 140 || rec->secondary_geometry_count >= 13) && rec->normalized_coverage < 40 || rec->normalized_coverage < 140 && rec->secondary_geometry_count < 13 && (t2 < 422 || rec->normalized_coverage < 40))
+      else if (((rec->normalized_coverage >= 140 || rec->secondary_geometry_count >= 13) && rec->normalized_coverage < 40) || (rec->normalized_coverage < 140 && rec->secondary_geometry_count < 13 && (t2 < 422 || rec->normalized_coverage < 40)))
         *conf = 0;
       else if (t2 < 390)
         *conf = 0;
@@ -2706,14 +2711,14 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
   const gint32 t4 = rec->study_metric_20 - (3 * (rec->reserved38[0] + rec->penalty_flag_b + rec->penalty_flag_a)) + (rec->agreement - (3 * (rec->reserved38[0] + rec->penalty_flag_b + rec->penalty_flag_a))) + rec->selector;
   if (*status == 0)
     {
-      if (rec->penalty_flag_b == 1 && (t0 >= 390 && t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count || t0 < 390 && (rec->secondary_geometry_count < 15 || t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count)) || rec->penalty_flag_b != 1 && rec->geometry_count <= 6 && (t0 >= 390 && t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count || t0 < 390 && (rec->secondary_geometry_count < 15 || t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count)))
+      if ((rec->penalty_flag_b == 1 && ((FALSE /* never: t0 >= 390 && t0 < 370 */ && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count) || (t0 < 390 && (rec->secondary_geometry_count < 15 || (t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count))))) || (rec->penalty_flag_b != 1 && rec->geometry_count <= 6 && ((FALSE /* never: t0 >= 390 && t0 < 370 */ && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count) || (t0 < 390 && (rec->secondary_geometry_count < 15 || (t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count))))))
         {
           *status = 0;
           *conf = 0;
         }
       if (rec->selector != 128)
         {
-          if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+          if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
             {
               *status = 0;
               *conf = 0;
@@ -2750,7 +2755,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                   *status = 0;
                   *conf = 0;
                 }
-              if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+              if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -2774,103 +2779,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                 {
                   const gboolean b1_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                   const gboolean b1_1 = rec->geometry_percent < 40 || b1_0;
-                  const gboolean b1_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b1_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b1_1;
+                  const gboolean b1_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b1_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b1_1);
                   const gboolean b1_3 = rec->geometry_percent < 45 || b1_2;
-                  const gboolean b1_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b1_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b1_3;
+                  const gboolean b1_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b1_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b1_3);
                   const gboolean b1_5 = rec->geometry_percent < 25 || b1_4;
-                  const gboolean b1_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b1_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b1_5;
-                  const gboolean b1_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b1_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b1_6);
-                  const gboolean b1_8 = rec->normalized_coverage >= 90 && b1_4 || rec->normalized_coverage < 90 && b1_7;
+                  const gboolean b1_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b1_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b1_5);
+                  const gboolean b1_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b1_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b1_6));
+                  const gboolean b1_8 = (rec->normalized_coverage >= 90 && b1_4) || (rec->normalized_coverage < 90 && b1_7);
                   const gboolean b1_9 = rec->geometry_percent < 35 || b1_8;
-                  const gboolean b1_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b1_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b1_9;
-                  if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b1_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b1_10)))
+                  const gboolean b1_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b1_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b1_9);
+                  if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b1_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b1_10))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b2_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                   const gboolean b2_1 = rec->geometry_percent < 60 || b2_0;
-                  const gboolean b2_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b2_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b2_1;
+                  const gboolean b2_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b2_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b2_1);
                   const gboolean b2_3 = rec->geometry_percent < 35 || b2_2;
-                  const gboolean b2_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b2_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b2_3;
+                  const gboolean b2_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b2_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b2_3);
                   const gboolean b2_5 = rec->geometry_percent < 22 || b2_4;
-                  const gboolean b2_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b2_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b2_5;
+                  const gboolean b2_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b2_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b2_5);
                   const gboolean b2_7 = rec->geometry_percent < 15 || b2_6;
-                  const gboolean b2_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b2_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b2_7;
-                  const gboolean b2_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b2_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b2_8);
-                  const gboolean b2_10 = rec->normalized_coverage >= 95 && b2_6 || rec->normalized_coverage < 95 && b2_9;
+                  const gboolean b2_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b2_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b2_7);
+                  const gboolean b2_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b2_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b2_8));
+                  const gboolean b2_10 = (rec->normalized_coverage >= 95 && b2_6) || (rec->normalized_coverage < 95 && b2_9);
                   const gboolean b2_11 = rec->geometry_percent < 10 || b2_10;
-                  const gboolean b2_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b2_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b2_11;
-                  const gboolean b2_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b2_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b2_12);
-                  const gboolean b2_14 = rec->normalized_coverage >= 120 && b2_10 || rec->normalized_coverage < 120 && b2_13;
-                  if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b2_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b2_14)))
+                  const gboolean b2_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b2_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b2_11);
+                  const gboolean b2_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b2_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b2_12));
+                  const gboolean b2_14 = (rec->normalized_coverage >= 120 && b2_10) || (rec->normalized_coverage < 120 && b2_13);
+                  if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b2_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b2_14))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b3_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                   const gboolean b3_1 = rec->geometry_percent < 28 || b3_0;
-                  const gboolean b3_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b3_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b3_1;
+                  const gboolean b3_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b3_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b3_1);
                   const gboolean b3_3 = rec->geometry_percent < 50 || b3_2;
-                  const gboolean b3_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b3_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b3_3;
+                  const gboolean b3_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b3_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b3_3);
                   const gboolean b3_5 = rec->geometry_percent < 30 || b3_4;
-                  const gboolean b3_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b3_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b3_5;
+                  const gboolean b3_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b3_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b3_5);
                   const gboolean b3_7 = rec->geometry_percent < 25 || b3_6;
-                  const gboolean b3_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b3_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b3_7;
-                  const gboolean b3_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b3_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b3_8);
-                  const gboolean b3_10 = rec->normalized_coverage >= 128 && b3_6 || rec->normalized_coverage < 128 && b3_9;
-                  if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b3_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b3_10)))
+                  const gboolean b3_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b3_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b3_7);
+                  const gboolean b3_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b3_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b3_8));
+                  const gboolean b3_10 = (rec->normalized_coverage >= 128 && b3_6) || (rec->normalized_coverage < 128 && b3_9);
+                  if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b3_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b3_10))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b4_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                   const gboolean b4_1 = rec->geometry_percent < 15 || b4_0;
-                  const gboolean b4_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b4_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b4_1;
+                  const gboolean b4_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b4_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b4_1);
                   const gboolean b4_3 = rec->secondary_geometry_count < 12 || b4_2;
-                  const gboolean b4_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b4_2 || rec->normalized_coverage < 75 && t0 < 425 && b4_3;
+                  const gboolean b4_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b4_2) || (rec->normalized_coverage < 75 && t0 < 425 && b4_3);
                   const gboolean b4_5 = rec->secondary_geometry_count < 16 || b4_4;
-                  const gboolean b4_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b4_4 || rec->normalized_coverage < 90 && t0 < 405 && b4_5;
+                  const gboolean b4_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b4_4) || (rec->normalized_coverage < 90 && t0 < 405 && b4_5);
                   const gboolean b4_7 = rec->secondary_geometry_count < 21 || b4_6;
-                  const gboolean b4_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b4_6 || rec->normalized_coverage < 110 && t0 < 390 && b4_7;
+                  const gboolean b4_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b4_6) || (rec->normalized_coverage < 110 && t0 < 390 && b4_7);
                   const gboolean b4_9 = rec->secondary_geometry_count < 14 || b4_8;
-                  const gboolean b4_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b4_8 || rec->normalized_coverage < 130 && t0 < 415 && b4_9;
-                  if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b4_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b4_10)))
+                  const gboolean b4_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b4_8) || (rec->normalized_coverage < 130 && t0 < 415 && b4_9);
+                  if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b4_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b4_10))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b5_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                   const gboolean b5_1 = rec->secondary_geometry_count < 15 || b5_0;
-                  const gboolean b5_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b5_0 || rec->normalized_coverage < 90 && t0 < 430 && b5_1;
+                  const gboolean b5_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b5_0) || (rec->normalized_coverage < 90 && t0 < 430 && b5_1);
                   const gboolean b5_3 = rec->secondary_geometry_count < 20 || b5_2;
-                  const gboolean b5_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b5_2 || rec->normalized_coverage < 95 && t0 < 405 && b5_3;
+                  const gboolean b5_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b5_2) || (rec->normalized_coverage < 95 && t0 < 405 && b5_3);
                   const gboolean b5_5 = rec->secondary_geometry_count < 22 || b5_4;
-                  const gboolean b5_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b5_4 || rec->normalized_coverage < 100 && t0 < 400 && b5_5;
+                  const gboolean b5_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b5_4) || (rec->normalized_coverage < 100 && t0 < 400 && b5_5);
                   const gboolean b5_7 = rec->secondary_geometry_count < 7 || b5_6;
-                  const gboolean b5_8 = t0 >= 435 && b5_6 || t0 < 435 && b5_7;
+                  const gboolean b5_8 = (t0 >= 435 && b5_6) || (t0 < 435 && b5_7);
                   const gboolean b5_9 = rec->secondary_geometry_count < 10 || b5_8;
-                  const gboolean b5_10 = t0 >= 430 && b5_8 || t0 < 430 && b5_9;
-                  const gboolean b5_11 = t0 >= 420 && b5_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b5_10);
-                  const gboolean b5_12 = rec->normalized_coverage >= 120 && b5_6 || rec->normalized_coverage < 120 && b5_11;
+                  const gboolean b5_10 = (t0 >= 430 && b5_8) || (t0 < 430 && b5_9);
+                  const gboolean b5_11 = (t0 >= 420 && b5_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b5_10));
+                  const gboolean b5_12 = (rec->normalized_coverage >= 120 && b5_6) || (rec->normalized_coverage < 120 && b5_11);
                   const gboolean b5_13 = rec->secondary_geometry_count < 12 || b5_12;
-                  const gboolean b5_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b5_12 || rec->normalized_coverage < 140 && t0 < 430 && b5_13;
-                  if (t3 >= 159 && (t0 >= 380 && b5_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b5_14)))
+                  const gboolean b5_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b5_12) || (rec->normalized_coverage < 140 && t0 < 430 && b5_13);
+                  if (t3 >= 159 && ((t0 >= 380 && b5_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b5_14))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
-                  if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                  if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
-                  else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                  else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
-                  else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                  else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -2878,19 +2883,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                   else
                     {
                       const gboolean b6_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                      const gboolean b6_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b6_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b6_0);
+                      const gboolean b6_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b6_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b6_0));
                       const gboolean b6_2 = t3 > 190 && b6_1;
                       const gboolean b6_3 = rec->geometry_percent < 40 || b6_2;
-                      const gboolean b6_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b6_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b6_3;
+                      const gboolean b6_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b6_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b6_3);
                       const gboolean b6_5 = rec->geometry_percent < 30 || b6_4;
-                      const gboolean b6_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b6_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b6_5;
+                      const gboolean b6_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b6_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b6_5);
                       const gboolean b6_7 = rec->geometry_percent < 30 || b6_6;
-                      const gboolean b6_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b6_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b6_7;
-                      const gboolean b6_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b6_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b6_8);
-                      const gboolean b6_10 = t3 <= 185 && b6_2 || t3 > 185 && b6_9;
+                      const gboolean b6_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b6_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b6_7);
+                      const gboolean b6_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b6_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b6_8));
+                      const gboolean b6_10 = (t3 <= 185 && b6_2) || (t3 > 185 && b6_9);
                       const gboolean b6_11 = rec->geometry_percent < 50 || b6_10;
-                      const gboolean b6_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b6_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b6_11;
-                      if (t3 <= 180 && b6_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b6_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b6_12)))
+                      const gboolean b6_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b6_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b6_11);
+                      if ((t3 <= 180 && b6_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b6_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b6_12)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -2908,7 +2913,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
             }
           if (rec->selector != 128)
             {
-              if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+              if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -2945,7 +2950,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       *status = 0;
                       *conf = 0;
                     }
-                  if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+                  if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -2969,103 +2974,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                     {
                       const gboolean b7_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                       const gboolean b7_1 = rec->geometry_percent < 40 || b7_0;
-                      const gboolean b7_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b7_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b7_1;
+                      const gboolean b7_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b7_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b7_1);
                       const gboolean b7_3 = rec->geometry_percent < 45 || b7_2;
-                      const gboolean b7_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b7_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b7_3;
+                      const gboolean b7_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b7_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b7_3);
                       const gboolean b7_5 = rec->geometry_percent < 25 || b7_4;
-                      const gboolean b7_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b7_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b7_5;
-                      const gboolean b7_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b7_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b7_6);
-                      const gboolean b7_8 = rec->normalized_coverage >= 90 && b7_4 || rec->normalized_coverage < 90 && b7_7;
+                      const gboolean b7_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b7_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b7_5);
+                      const gboolean b7_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b7_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b7_6));
+                      const gboolean b7_8 = (rec->normalized_coverage >= 90 && b7_4) || (rec->normalized_coverage < 90 && b7_7);
                       const gboolean b7_9 = rec->geometry_percent < 35 || b7_8;
-                      const gboolean b7_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b7_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b7_9;
-                      if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b7_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b7_10)))
+                      const gboolean b7_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b7_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b7_9);
+                      if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b7_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b7_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b8_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                       const gboolean b8_1 = rec->geometry_percent < 60 || b8_0;
-                      const gboolean b8_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b8_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b8_1;
+                      const gboolean b8_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b8_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b8_1);
                       const gboolean b8_3 = rec->geometry_percent < 35 || b8_2;
-                      const gboolean b8_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b8_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b8_3;
+                      const gboolean b8_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b8_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b8_3);
                       const gboolean b8_5 = rec->geometry_percent < 22 || b8_4;
-                      const gboolean b8_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b8_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b8_5;
+                      const gboolean b8_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b8_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b8_5);
                       const gboolean b8_7 = rec->geometry_percent < 15 || b8_6;
-                      const gboolean b8_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b8_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b8_7;
-                      const gboolean b8_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b8_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b8_8);
-                      const gboolean b8_10 = rec->normalized_coverage >= 95 && b8_6 || rec->normalized_coverage < 95 && b8_9;
+                      const gboolean b8_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b8_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b8_7);
+                      const gboolean b8_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b8_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b8_8));
+                      const gboolean b8_10 = (rec->normalized_coverage >= 95 && b8_6) || (rec->normalized_coverage < 95 && b8_9);
                       const gboolean b8_11 = rec->geometry_percent < 10 || b8_10;
-                      const gboolean b8_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b8_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b8_11;
-                      const gboolean b8_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b8_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b8_12);
-                      const gboolean b8_14 = rec->normalized_coverage >= 120 && b8_10 || rec->normalized_coverage < 120 && b8_13;
-                      if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b8_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b8_14)))
+                      const gboolean b8_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b8_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b8_11);
+                      const gboolean b8_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b8_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b8_12));
+                      const gboolean b8_14 = (rec->normalized_coverage >= 120 && b8_10) || (rec->normalized_coverage < 120 && b8_13);
+                      if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b8_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b8_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b9_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                       const gboolean b9_1 = rec->geometry_percent < 28 || b9_0;
-                      const gboolean b9_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b9_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b9_1;
+                      const gboolean b9_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b9_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b9_1);
                       const gboolean b9_3 = rec->geometry_percent < 50 || b9_2;
-                      const gboolean b9_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b9_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b9_3;
+                      const gboolean b9_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b9_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b9_3);
                       const gboolean b9_5 = rec->geometry_percent < 30 || b9_4;
-                      const gboolean b9_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b9_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b9_5;
+                      const gboolean b9_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b9_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b9_5);
                       const gboolean b9_7 = rec->geometry_percent < 25 || b9_6;
-                      const gboolean b9_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b9_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b9_7;
-                      const gboolean b9_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b9_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b9_8);
-                      const gboolean b9_10 = rec->normalized_coverage >= 128 && b9_6 || rec->normalized_coverage < 128 && b9_9;
-                      if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b9_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b9_10)))
+                      const gboolean b9_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b9_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b9_7);
+                      const gboolean b9_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b9_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b9_8));
+                      const gboolean b9_10 = (rec->normalized_coverage >= 128 && b9_6) || (rec->normalized_coverage < 128 && b9_9);
+                      if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b9_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b9_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b10_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                       const gboolean b10_1 = rec->geometry_percent < 15 || b10_0;
-                      const gboolean b10_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b10_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b10_1;
+                      const gboolean b10_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b10_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b10_1);
                       const gboolean b10_3 = rec->secondary_geometry_count < 12 || b10_2;
-                      const gboolean b10_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b10_2 || rec->normalized_coverage < 75 && t0 < 425 && b10_3;
+                      const gboolean b10_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b10_2) || (rec->normalized_coverage < 75 && t0 < 425 && b10_3);
                       const gboolean b10_5 = rec->secondary_geometry_count < 16 || b10_4;
-                      const gboolean b10_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b10_4 || rec->normalized_coverage < 90 && t0 < 405 && b10_5;
+                      const gboolean b10_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b10_4) || (rec->normalized_coverage < 90 && t0 < 405 && b10_5);
                       const gboolean b10_7 = rec->secondary_geometry_count < 21 || b10_6;
-                      const gboolean b10_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b10_6 || rec->normalized_coverage < 110 && t0 < 390 && b10_7;
+                      const gboolean b10_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b10_6) || (rec->normalized_coverage < 110 && t0 < 390 && b10_7);
                       const gboolean b10_9 = rec->secondary_geometry_count < 14 || b10_8;
-                      const gboolean b10_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b10_8 || rec->normalized_coverage < 130 && t0 < 415 && b10_9;
-                      if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b10_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b10_10)))
+                      const gboolean b10_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b10_8) || (rec->normalized_coverage < 130 && t0 < 415 && b10_9);
+                      if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b10_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b10_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b11_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                       const gboolean b11_1 = rec->secondary_geometry_count < 15 || b11_0;
-                      const gboolean b11_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b11_0 || rec->normalized_coverage < 90 && t0 < 430 && b11_1;
+                      const gboolean b11_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b11_0) || (rec->normalized_coverage < 90 && t0 < 430 && b11_1);
                       const gboolean b11_3 = rec->secondary_geometry_count < 20 || b11_2;
-                      const gboolean b11_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b11_2 || rec->normalized_coverage < 95 && t0 < 405 && b11_3;
+                      const gboolean b11_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b11_2) || (rec->normalized_coverage < 95 && t0 < 405 && b11_3);
                       const gboolean b11_5 = rec->secondary_geometry_count < 22 || b11_4;
-                      const gboolean b11_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b11_4 || rec->normalized_coverage < 100 && t0 < 400 && b11_5;
+                      const gboolean b11_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b11_4) || (rec->normalized_coverage < 100 && t0 < 400 && b11_5);
                       const gboolean b11_7 = rec->secondary_geometry_count < 7 || b11_6;
-                      const gboolean b11_8 = t0 >= 435 && b11_6 || t0 < 435 && b11_7;
+                      const gboolean b11_8 = (t0 >= 435 && b11_6) || (t0 < 435 && b11_7);
                       const gboolean b11_9 = rec->secondary_geometry_count < 10 || b11_8;
-                      const gboolean b11_10 = t0 >= 430 && b11_8 || t0 < 430 && b11_9;
-                      const gboolean b11_11 = t0 >= 420 && b11_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b11_10);
-                      const gboolean b11_12 = rec->normalized_coverage >= 120 && b11_6 || rec->normalized_coverage < 120 && b11_11;
+                      const gboolean b11_10 = (t0 >= 430 && b11_8) || (t0 < 430 && b11_9);
+                      const gboolean b11_11 = (t0 >= 420 && b11_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b11_10));
+                      const gboolean b11_12 = (rec->normalized_coverage >= 120 && b11_6) || (rec->normalized_coverage < 120 && b11_11);
                       const gboolean b11_13 = rec->secondary_geometry_count < 12 || b11_12;
-                      const gboolean b11_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b11_12 || rec->normalized_coverage < 140 && t0 < 430 && b11_13;
-                      if (t3 >= 159 && (t0 >= 380 && b11_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b11_14)))
+                      const gboolean b11_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b11_12) || (rec->normalized_coverage < 140 && t0 < 430 && b11_13);
+                      if (t3 >= 159 && ((t0 >= 380 && b11_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b11_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                      if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                      else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                      else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -3073,19 +3078,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       else
                         {
                           const gboolean b12_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                          const gboolean b12_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b12_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b12_0);
+                          const gboolean b12_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b12_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b12_0));
                           const gboolean b12_2 = t3 > 190 && b12_1;
                           const gboolean b12_3 = rec->geometry_percent < 40 || b12_2;
-                          const gboolean b12_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b12_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b12_3;
+                          const gboolean b12_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b12_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b12_3);
                           const gboolean b12_5 = rec->geometry_percent < 30 || b12_4;
-                          const gboolean b12_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b12_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b12_5;
+                          const gboolean b12_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b12_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b12_5);
                           const gboolean b12_7 = rec->geometry_percent < 30 || b12_6;
-                          const gboolean b12_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b12_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b12_7;
-                          const gboolean b12_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b12_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b12_8);
-                          const gboolean b12_10 = t3 <= 185 && b12_2 || t3 > 185 && b12_9;
+                          const gboolean b12_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b12_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b12_7);
+                          const gboolean b12_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b12_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b12_8));
+                          const gboolean b12_10 = (t3 <= 185 && b12_2) || (t3 > 185 && b12_9);
                           const gboolean b12_11 = rec->geometry_percent < 50 || b12_10;
-                          const gboolean b12_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b12_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b12_11;
-                          if (t3 <= 180 && b12_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b12_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b12_12)))
+                          const gboolean b12_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b12_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b12_11);
+                          if ((t3 <= 180 && b12_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b12_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b12_12)))))
                             {
                               *status = 0;
                               *conf = 0;
@@ -3096,7 +3101,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
             }
           else if (rec->study_metric_20 >= 175)
             {
-              if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+              if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -3133,7 +3138,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       *status = 0;
                       *conf = 0;
                     }
-                  if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+                  if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -3157,103 +3162,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                     {
                       const gboolean b13_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                       const gboolean b13_1 = rec->geometry_percent < 40 || b13_0;
-                      const gboolean b13_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b13_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b13_1;
+                      const gboolean b13_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b13_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b13_1);
                       const gboolean b13_3 = rec->geometry_percent < 45 || b13_2;
-                      const gboolean b13_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b13_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b13_3;
+                      const gboolean b13_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b13_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b13_3);
                       const gboolean b13_5 = rec->geometry_percent < 25 || b13_4;
-                      const gboolean b13_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b13_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b13_5;
-                      const gboolean b13_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b13_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b13_6);
-                      const gboolean b13_8 = rec->normalized_coverage >= 90 && b13_4 || rec->normalized_coverage < 90 && b13_7;
+                      const gboolean b13_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b13_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b13_5);
+                      const gboolean b13_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b13_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b13_6));
+                      const gboolean b13_8 = (rec->normalized_coverage >= 90 && b13_4) || (rec->normalized_coverage < 90 && b13_7);
                       const gboolean b13_9 = rec->geometry_percent < 35 || b13_8;
-                      const gboolean b13_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b13_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b13_9;
-                      if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b13_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b13_10)))
+                      const gboolean b13_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b13_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b13_9);
+                      if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b13_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b13_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b14_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                       const gboolean b14_1 = rec->geometry_percent < 60 || b14_0;
-                      const gboolean b14_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b14_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b14_1;
+                      const gboolean b14_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b14_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b14_1);
                       const gboolean b14_3 = rec->geometry_percent < 35 || b14_2;
-                      const gboolean b14_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b14_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b14_3;
+                      const gboolean b14_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b14_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b14_3);
                       const gboolean b14_5 = rec->geometry_percent < 22 || b14_4;
-                      const gboolean b14_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b14_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b14_5;
+                      const gboolean b14_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b14_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b14_5);
                       const gboolean b14_7 = rec->geometry_percent < 15 || b14_6;
-                      const gboolean b14_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b14_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b14_7;
-                      const gboolean b14_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b14_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b14_8);
-                      const gboolean b14_10 = rec->normalized_coverage >= 95 && b14_6 || rec->normalized_coverage < 95 && b14_9;
+                      const gboolean b14_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b14_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b14_7);
+                      const gboolean b14_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b14_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b14_8));
+                      const gboolean b14_10 = (rec->normalized_coverage >= 95 && b14_6) || (rec->normalized_coverage < 95 && b14_9);
                       const gboolean b14_11 = rec->geometry_percent < 10 || b14_10;
-                      const gboolean b14_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b14_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b14_11;
-                      const gboolean b14_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b14_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b14_12);
-                      const gboolean b14_14 = rec->normalized_coverage >= 120 && b14_10 || rec->normalized_coverage < 120 && b14_13;
-                      if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b14_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b14_14)))
+                      const gboolean b14_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b14_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b14_11);
+                      const gboolean b14_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b14_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b14_12));
+                      const gboolean b14_14 = (rec->normalized_coverage >= 120 && b14_10) || (rec->normalized_coverage < 120 && b14_13);
+                      if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b14_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b14_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b15_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                       const gboolean b15_1 = rec->geometry_percent < 28 || b15_0;
-                      const gboolean b15_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b15_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b15_1;
+                      const gboolean b15_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b15_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b15_1);
                       const gboolean b15_3 = rec->geometry_percent < 50 || b15_2;
-                      const gboolean b15_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b15_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b15_3;
+                      const gboolean b15_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b15_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b15_3);
                       const gboolean b15_5 = rec->geometry_percent < 30 || b15_4;
-                      const gboolean b15_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b15_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b15_5;
+                      const gboolean b15_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b15_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b15_5);
                       const gboolean b15_7 = rec->geometry_percent < 25 || b15_6;
-                      const gboolean b15_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b15_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b15_7;
-                      const gboolean b15_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b15_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b15_8);
-                      const gboolean b15_10 = rec->normalized_coverage >= 128 && b15_6 || rec->normalized_coverage < 128 && b15_9;
-                      if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b15_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b15_10)))
+                      const gboolean b15_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b15_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b15_7);
+                      const gboolean b15_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b15_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b15_8));
+                      const gboolean b15_10 = (rec->normalized_coverage >= 128 && b15_6) || (rec->normalized_coverage < 128 && b15_9);
+                      if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b15_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b15_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b16_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                       const gboolean b16_1 = rec->geometry_percent < 15 || b16_0;
-                      const gboolean b16_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b16_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b16_1;
+                      const gboolean b16_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b16_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b16_1);
                       const gboolean b16_3 = rec->secondary_geometry_count < 12 || b16_2;
-                      const gboolean b16_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b16_2 || rec->normalized_coverage < 75 && t0 < 425 && b16_3;
+                      const gboolean b16_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b16_2) || (rec->normalized_coverage < 75 && t0 < 425 && b16_3);
                       const gboolean b16_5 = rec->secondary_geometry_count < 16 || b16_4;
-                      const gboolean b16_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b16_4 || rec->normalized_coverage < 90 && t0 < 405 && b16_5;
+                      const gboolean b16_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b16_4) || (rec->normalized_coverage < 90 && t0 < 405 && b16_5);
                       const gboolean b16_7 = rec->secondary_geometry_count < 21 || b16_6;
-                      const gboolean b16_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b16_6 || rec->normalized_coverage < 110 && t0 < 390 && b16_7;
+                      const gboolean b16_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b16_6) || (rec->normalized_coverage < 110 && t0 < 390 && b16_7);
                       const gboolean b16_9 = rec->secondary_geometry_count < 14 || b16_8;
-                      const gboolean b16_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b16_8 || rec->normalized_coverage < 130 && t0 < 415 && b16_9;
-                      if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b16_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b16_10)))
+                      const gboolean b16_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b16_8) || (rec->normalized_coverage < 130 && t0 < 415 && b16_9);
+                      if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b16_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b16_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b17_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                       const gboolean b17_1 = rec->secondary_geometry_count < 15 || b17_0;
-                      const gboolean b17_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b17_0 || rec->normalized_coverage < 90 && t0 < 430 && b17_1;
+                      const gboolean b17_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b17_0) || (rec->normalized_coverage < 90 && t0 < 430 && b17_1);
                       const gboolean b17_3 = rec->secondary_geometry_count < 20 || b17_2;
-                      const gboolean b17_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b17_2 || rec->normalized_coverage < 95 && t0 < 405 && b17_3;
+                      const gboolean b17_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b17_2) || (rec->normalized_coverage < 95 && t0 < 405 && b17_3);
                       const gboolean b17_5 = rec->secondary_geometry_count < 22 || b17_4;
-                      const gboolean b17_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b17_4 || rec->normalized_coverage < 100 && t0 < 400 && b17_5;
+                      const gboolean b17_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b17_4) || (rec->normalized_coverage < 100 && t0 < 400 && b17_5);
                       const gboolean b17_7 = rec->secondary_geometry_count < 7 || b17_6;
-                      const gboolean b17_8 = t0 >= 435 && b17_6 || t0 < 435 && b17_7;
+                      const gboolean b17_8 = (t0 >= 435 && b17_6) || (t0 < 435 && b17_7);
                       const gboolean b17_9 = rec->secondary_geometry_count < 10 || b17_8;
-                      const gboolean b17_10 = t0 >= 430 && b17_8 || t0 < 430 && b17_9;
-                      const gboolean b17_11 = t0 >= 420 && b17_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b17_10);
-                      const gboolean b17_12 = rec->normalized_coverage >= 120 && b17_6 || rec->normalized_coverage < 120 && b17_11;
+                      const gboolean b17_10 = (t0 >= 430 && b17_8) || (t0 < 430 && b17_9);
+                      const gboolean b17_11 = (t0 >= 420 && b17_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b17_10));
+                      const gboolean b17_12 = (rec->normalized_coverage >= 120 && b17_6) || (rec->normalized_coverage < 120 && b17_11);
                       const gboolean b17_13 = rec->secondary_geometry_count < 12 || b17_12;
-                      const gboolean b17_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b17_12 || rec->normalized_coverage < 140 && t0 < 430 && b17_13;
-                      if (t3 >= 159 && (t0 >= 380 && b17_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b17_14)))
+                      const gboolean b17_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b17_12) || (rec->normalized_coverage < 140 && t0 < 430 && b17_13);
+                      if (t3 >= 159 && ((t0 >= 380 && b17_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b17_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                      if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                      else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                      else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -3261,19 +3266,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       else
                         {
                           const gboolean b18_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                          const gboolean b18_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b18_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b18_0);
+                          const gboolean b18_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b18_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b18_0));
                           const gboolean b18_2 = t3 > 190 && b18_1;
                           const gboolean b18_3 = rec->geometry_percent < 40 || b18_2;
-                          const gboolean b18_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b18_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b18_3;
+                          const gboolean b18_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b18_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b18_3);
                           const gboolean b18_5 = rec->geometry_percent < 30 || b18_4;
-                          const gboolean b18_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b18_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b18_5;
+                          const gboolean b18_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b18_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b18_5);
                           const gboolean b18_7 = rec->geometry_percent < 30 || b18_6;
-                          const gboolean b18_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b18_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b18_7;
-                          const gboolean b18_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b18_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b18_8);
-                          const gboolean b18_10 = t3 <= 185 && b18_2 || t3 > 185 && b18_9;
+                          const gboolean b18_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b18_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b18_7);
+                          const gboolean b18_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b18_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b18_8));
+                          const gboolean b18_10 = (t3 <= 185 && b18_2) || (t3 > 185 && b18_9);
                           const gboolean b18_11 = rec->geometry_percent < 50 || b18_10;
-                          const gboolean b18_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b18_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b18_11;
-                          if (t3 <= 180 && b18_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b18_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b18_12)))
+                          const gboolean b18_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b18_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b18_11);
+                          if ((t3 <= 180 && b18_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b18_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b18_12)))))
                             {
                               *status = 0;
                               *conf = 0;
@@ -3299,7 +3304,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                   *status = 0;
                   *conf = 0;
                 }
-              if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+              if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -3336,7 +3341,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       *status = 0;
                       *conf = 0;
                     }
-                  if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+                  if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -3360,103 +3365,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                     {
                       const gboolean b19_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                       const gboolean b19_1 = rec->geometry_percent < 40 || b19_0;
-                      const gboolean b19_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b19_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b19_1;
+                      const gboolean b19_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b19_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b19_1);
                       const gboolean b19_3 = rec->geometry_percent < 45 || b19_2;
-                      const gboolean b19_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b19_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b19_3;
+                      const gboolean b19_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b19_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b19_3);
                       const gboolean b19_5 = rec->geometry_percent < 25 || b19_4;
-                      const gboolean b19_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b19_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b19_5;
-                      const gboolean b19_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b19_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b19_6);
-                      const gboolean b19_8 = rec->normalized_coverage >= 90 && b19_4 || rec->normalized_coverage < 90 && b19_7;
+                      const gboolean b19_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b19_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b19_5);
+                      const gboolean b19_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b19_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b19_6));
+                      const gboolean b19_8 = (rec->normalized_coverage >= 90 && b19_4) || (rec->normalized_coverage < 90 && b19_7);
                       const gboolean b19_9 = rec->geometry_percent < 35 || b19_8;
-                      const gboolean b19_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b19_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b19_9;
-                      if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b19_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b19_10)))
+                      const gboolean b19_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b19_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b19_9);
+                      if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b19_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b19_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b20_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                       const gboolean b20_1 = rec->geometry_percent < 60 || b20_0;
-                      const gboolean b20_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b20_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b20_1;
+                      const gboolean b20_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b20_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b20_1);
                       const gboolean b20_3 = rec->geometry_percent < 35 || b20_2;
-                      const gboolean b20_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b20_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b20_3;
+                      const gboolean b20_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b20_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b20_3);
                       const gboolean b20_5 = rec->geometry_percent < 22 || b20_4;
-                      const gboolean b20_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b20_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b20_5;
+                      const gboolean b20_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b20_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b20_5);
                       const gboolean b20_7 = rec->geometry_percent < 15 || b20_6;
-                      const gboolean b20_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b20_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b20_7;
-                      const gboolean b20_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b20_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b20_8);
-                      const gboolean b20_10 = rec->normalized_coverage >= 95 && b20_6 || rec->normalized_coverage < 95 && b20_9;
+                      const gboolean b20_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b20_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b20_7);
+                      const gboolean b20_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b20_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b20_8));
+                      const gboolean b20_10 = (rec->normalized_coverage >= 95 && b20_6) || (rec->normalized_coverage < 95 && b20_9);
                       const gboolean b20_11 = rec->geometry_percent < 10 || b20_10;
-                      const gboolean b20_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b20_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b20_11;
-                      const gboolean b20_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b20_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b20_12);
-                      const gboolean b20_14 = rec->normalized_coverage >= 120 && b20_10 || rec->normalized_coverage < 120 && b20_13;
-                      if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b20_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b20_14)))
+                      const gboolean b20_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b20_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b20_11);
+                      const gboolean b20_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b20_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b20_12));
+                      const gboolean b20_14 = (rec->normalized_coverage >= 120 && b20_10) || (rec->normalized_coverage < 120 && b20_13);
+                      if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b20_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b20_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b21_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                       const gboolean b21_1 = rec->geometry_percent < 28 || b21_0;
-                      const gboolean b21_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b21_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b21_1;
+                      const gboolean b21_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b21_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b21_1);
                       const gboolean b21_3 = rec->geometry_percent < 50 || b21_2;
-                      const gboolean b21_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b21_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b21_3;
+                      const gboolean b21_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b21_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b21_3);
                       const gboolean b21_5 = rec->geometry_percent < 30 || b21_4;
-                      const gboolean b21_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b21_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b21_5;
+                      const gboolean b21_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b21_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b21_5);
                       const gboolean b21_7 = rec->geometry_percent < 25 || b21_6;
-                      const gboolean b21_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b21_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b21_7;
-                      const gboolean b21_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b21_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b21_8);
-                      const gboolean b21_10 = rec->normalized_coverage >= 128 && b21_6 || rec->normalized_coverage < 128 && b21_9;
-                      if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b21_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b21_10)))
+                      const gboolean b21_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b21_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b21_7);
+                      const gboolean b21_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b21_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b21_8));
+                      const gboolean b21_10 = (rec->normalized_coverage >= 128 && b21_6) || (rec->normalized_coverage < 128 && b21_9);
+                      if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b21_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b21_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b22_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                       const gboolean b22_1 = rec->geometry_percent < 15 || b22_0;
-                      const gboolean b22_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b22_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b22_1;
+                      const gboolean b22_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b22_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b22_1);
                       const gboolean b22_3 = rec->secondary_geometry_count < 12 || b22_2;
-                      const gboolean b22_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b22_2 || rec->normalized_coverage < 75 && t0 < 425 && b22_3;
+                      const gboolean b22_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b22_2) || (rec->normalized_coverage < 75 && t0 < 425 && b22_3);
                       const gboolean b22_5 = rec->secondary_geometry_count < 16 || b22_4;
-                      const gboolean b22_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b22_4 || rec->normalized_coverage < 90 && t0 < 405 && b22_5;
+                      const gboolean b22_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b22_4) || (rec->normalized_coverage < 90 && t0 < 405 && b22_5);
                       const gboolean b22_7 = rec->secondary_geometry_count < 21 || b22_6;
-                      const gboolean b22_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b22_6 || rec->normalized_coverage < 110 && t0 < 390 && b22_7;
+                      const gboolean b22_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b22_6) || (rec->normalized_coverage < 110 && t0 < 390 && b22_7);
                       const gboolean b22_9 = rec->secondary_geometry_count < 14 || b22_8;
-                      const gboolean b22_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b22_8 || rec->normalized_coverage < 130 && t0 < 415 && b22_9;
-                      if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b22_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b22_10)))
+                      const gboolean b22_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b22_8) || (rec->normalized_coverage < 130 && t0 < 415 && b22_9);
+                      if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b22_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b22_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b23_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                       const gboolean b23_1 = rec->secondary_geometry_count < 15 || b23_0;
-                      const gboolean b23_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b23_0 || rec->normalized_coverage < 90 && t0 < 430 && b23_1;
+                      const gboolean b23_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b23_0) || (rec->normalized_coverage < 90 && t0 < 430 && b23_1);
                       const gboolean b23_3 = rec->secondary_geometry_count < 20 || b23_2;
-                      const gboolean b23_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b23_2 || rec->normalized_coverage < 95 && t0 < 405 && b23_3;
+                      const gboolean b23_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b23_2) || (rec->normalized_coverage < 95 && t0 < 405 && b23_3);
                       const gboolean b23_5 = rec->secondary_geometry_count < 22 || b23_4;
-                      const gboolean b23_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b23_4 || rec->normalized_coverage < 100 && t0 < 400 && b23_5;
+                      const gboolean b23_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b23_4) || (rec->normalized_coverage < 100 && t0 < 400 && b23_5);
                       const gboolean b23_7 = rec->secondary_geometry_count < 7 || b23_6;
-                      const gboolean b23_8 = t0 >= 435 && b23_6 || t0 < 435 && b23_7;
+                      const gboolean b23_8 = (t0 >= 435 && b23_6) || (t0 < 435 && b23_7);
                       const gboolean b23_9 = rec->secondary_geometry_count < 10 || b23_8;
-                      const gboolean b23_10 = t0 >= 430 && b23_8 || t0 < 430 && b23_9;
-                      const gboolean b23_11 = t0 >= 420 && b23_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b23_10);
-                      const gboolean b23_12 = rec->normalized_coverage >= 120 && b23_6 || rec->normalized_coverage < 120 && b23_11;
+                      const gboolean b23_10 = (t0 >= 430 && b23_8) || (t0 < 430 && b23_9);
+                      const gboolean b23_11 = (t0 >= 420 && b23_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b23_10));
+                      const gboolean b23_12 = (rec->normalized_coverage >= 120 && b23_6) || (rec->normalized_coverage < 120 && b23_11);
                       const gboolean b23_13 = rec->secondary_geometry_count < 12 || b23_12;
-                      const gboolean b23_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b23_12 || rec->normalized_coverage < 140 && t0 < 430 && b23_13;
-                      if (t3 >= 159 && (t0 >= 380 && b23_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b23_14)))
+                      const gboolean b23_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b23_12) || (rec->normalized_coverage < 140 && t0 < 430 && b23_13);
+                      if (t3 >= 159 && ((t0 >= 380 && b23_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b23_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                      if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                      else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                      else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -3464,19 +3469,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       else
                         {
                           const gboolean b24_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                          const gboolean b24_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b24_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b24_0);
+                          const gboolean b24_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b24_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b24_0));
                           const gboolean b24_2 = t3 > 190 && b24_1;
                           const gboolean b24_3 = rec->geometry_percent < 40 || b24_2;
-                          const gboolean b24_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b24_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b24_3;
+                          const gboolean b24_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b24_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b24_3);
                           const gboolean b24_5 = rec->geometry_percent < 30 || b24_4;
-                          const gboolean b24_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b24_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b24_5;
+                          const gboolean b24_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b24_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b24_5);
                           const gboolean b24_7 = rec->geometry_percent < 30 || b24_6;
-                          const gboolean b24_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b24_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b24_7;
-                          const gboolean b24_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b24_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b24_8);
-                          const gboolean b24_10 = t3 <= 185 && b24_2 || t3 > 185 && b24_9;
+                          const gboolean b24_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b24_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b24_7);
+                          const gboolean b24_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b24_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b24_8));
+                          const gboolean b24_10 = (t3 <= 185 && b24_2) || (t3 > 185 && b24_9);
                           const gboolean b24_11 = rec->geometry_percent < 50 || b24_10;
-                          const gboolean b24_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b24_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b24_11;
-                          if (t3 <= 180 && b24_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b24_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b24_12)))
+                          const gboolean b24_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b24_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b24_11);
+                          if ((t3 <= 180 && b24_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b24_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b24_12)))))
                             {
                               *status = 0;
                               *conf = 0;
@@ -3489,7 +3494,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
     }
   else
     {
-      if (rec->normalized_coverage < 105 && ((rec->geometry_count > 4 || rec->secondary_geometry_count > 8) && rec->geometry_count <= 10 && rec->secondary_geometry_count <= 17 && t0 < 376 || rec->geometry_count <= 4 && rec->secondary_geometry_count <= 8 && (t0 < 415 || rec->geometry_count <= 10 && rec->secondary_geometry_count <= 17 && t0 < 376)))
+      if (rec->normalized_coverage < 105 && (((rec->geometry_count > 4 || rec->secondary_geometry_count > 8) && rec->geometry_count <= 10 && rec->secondary_geometry_count <= 17 && t0 < 376) || (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 8 && (t0 < 415 || (rec->geometry_count <= 10 && rec->secondary_geometry_count <= 17 && t0 < 376)))))
         {
           *status = 0;
           *conf = 0;
@@ -3509,7 +3514,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
           *status = 0;
           *conf = 0;
         }
-      else if ((rec->geometry_count > 9 || rec->secondary_geometry_count > 12 || t1 > 210 || rec->matched_percent > 50 || rec->geometry_percent > 15) && rec->normalized_coverage < 36 && rec->geometry_count < rec->secondary_geometry_count && rec->secondary_geometry_count <= 9 && t0 < 426 || rec->geometry_count <= 9 && rec->secondary_geometry_count <= 12 && t1 <= 210 && rec->matched_percent <= 50 && rec->geometry_percent <= 15 && (t0 <= 399 || rec->normalized_coverage < 36 && rec->geometry_count < rec->secondary_geometry_count && rec->secondary_geometry_count <= 9 && t0 < 426))
+      else if (((rec->geometry_count > 9 || rec->secondary_geometry_count > 12 || t1 > 210 || rec->matched_percent > 50 || rec->geometry_percent > 15) && rec->normalized_coverage < 36 && rec->geometry_count < rec->secondary_geometry_count && rec->secondary_geometry_count <= 9 && t0 < 426) || (rec->geometry_count <= 9 && rec->secondary_geometry_count <= 12 && t1 <= 210 && rec->matched_percent <= 50 && rec->geometry_percent <= 15 && (t0 <= 399 || (rec->normalized_coverage < 36 && rec->geometry_count < rec->secondary_geometry_count && rec->secondary_geometry_count <= 9 && t0 < 426))))
         {
           *status = 0;
           *conf = 0;
@@ -3526,21 +3531,21 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
         }
       const gboolean b25_0 = rec->secondary_geometry_count <= 16 && t1 <= 200 && t2 <= 170;
       const gboolean b25_1 = rec->matched_percent <= 50 || b25_0;
-      const gboolean b25_2 = (rec->geometry_count > 15 || rec->secondary_geometry_count > 18 || rec->geometry_percent >= 15) && b25_0 || rec->geometry_count <= 15 && rec->secondary_geometry_count <= 18 && rec->geometry_percent < 15 && b25_1;
+      const gboolean b25_2 = ((rec->geometry_count > 15 || rec->secondary_geometry_count > 18 || rec->geometry_percent >= 15) && b25_0) || (rec->geometry_count <= 15 && rec->secondary_geometry_count <= 18 && rec->geometry_percent < 15 && b25_1);
       const gboolean b25_3 = t1 <= 215 || b25_2;
-      const gboolean b25_4 = (rec->geometry_count > 12 || rec->secondary_geometry_count > 15 || rec->geometry_percent >= 20) && b25_2 || rec->geometry_count <= 12 && rec->secondary_geometry_count <= 15 && rec->geometry_percent < 20 && b25_3;
+      const gboolean b25_4 = ((rec->geometry_count > 12 || rec->secondary_geometry_count > 15 || rec->geometry_percent >= 20) && b25_2) || (rec->geometry_count <= 12 && rec->secondary_geometry_count <= 15 && rec->geometry_percent < 20 && b25_3);
       const gboolean b25_5 = t2 <= 190 || b25_4;
-      const gboolean b25_6 = (rec->geometry_count > 9 || rec->secondary_geometry_count > 13 || rec->geometry_percent >= 15) && b25_4 || rec->geometry_count <= 9 && rec->secondary_geometry_count <= 13 && rec->geometry_percent < 15 && b25_5;
+      const gboolean b25_6 = ((rec->geometry_count > 9 || rec->secondary_geometry_count > 13 || rec->geometry_percent >= 15) && b25_4) || (rec->geometry_count <= 9 && rec->secondary_geometry_count <= 13 && rec->geometry_percent < 15 && b25_5);
       const gboolean b25_7 = rec->geometry_percent < 10 || b25_6;
-      const gboolean b25_8 = (rec->geometry_count > 11 || rec->secondary_geometry_count > 12) && b25_6 || rec->geometry_count <= 11 && rec->secondary_geometry_count <= 12 && b25_7;
+      const gboolean b25_8 = ((rec->geometry_count > 11 || rec->secondary_geometry_count > 12) && b25_6) || (rec->geometry_count <= 11 && rec->secondary_geometry_count <= 12 && b25_7);
       const gboolean b25_9 = rec->geometry_percent <= 10 || b25_8;
-      const gboolean b25_10 = (rec->geometry_count > 12 || t2 > 165) && b25_8 || rec->geometry_count <= 12 && t2 <= 165 && b25_9;
-      if (*status != 0 && rec->selector <= 128 && ((rec->geometry_count >= 20 || t1 >= 200) && b25_10 || rec->geometry_count < 20 && t1 < 200 && (t2 < 150 || b25_10)))
+      const gboolean b25_10 = ((rec->geometry_count > 12 || t2 > 165) && b25_8) || (rec->geometry_count <= 12 && t2 <= 165 && b25_9);
+      if (*status != 0 && rec->selector <= 128 && (((rec->geometry_count >= 20 || t1 >= 200) && b25_10) || (rec->geometry_count < 20 && t1 < 200 && (t2 < 150 || b25_10))))
         {
           *status = 0;
           *conf = 0;
         }
-      if (t1 <= 205 && ((rec->geometry_count > 9 || rec->secondary_geometry_count > 15) && rec->geometry_count <= 12 && rec->secondary_geometry_count <= 16 && rec->geometry_percent <= 25 && t0 <= 381 || rec->geometry_count <= 9 && rec->secondary_geometry_count <= 15 && (rec->geometry_percent <= 20 || rec->geometry_count <= 12 && rec->secondary_geometry_count <= 16 && rec->geometry_percent <= 25 && t0 <= 381)))
+      if (t1 <= 205 && (((rec->geometry_count > 9 || rec->secondary_geometry_count > 15) && rec->geometry_count <= 12 && rec->secondary_geometry_count <= 16 && rec->geometry_percent <= 25 && t0 <= 381) || (rec->geometry_count <= 9 && rec->secondary_geometry_count <= 15 && (rec->geometry_percent <= 20 || (rec->geometry_count <= 12 && rec->secondary_geometry_count <= 16 && rec->geometry_percent <= 25 && t0 <= 381)))))
         {
           *status = 0;
           *conf = 0;
@@ -3557,7 +3562,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
               *status = 0;
               *conf = 0;
             }
-          else if ((rec->normalized_coverage > 66 || rec->geometry_count > 7 || rec->secondary_geometry_count > 12 || rec->selector > 226 || t1 > 220) && rec->normalized_coverage <= 80 && ((rec->geometry_count > 5 || rec->secondary_geometry_count > 13) && ((rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210 || rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210)) || rec->geometry_count <= 5 && rec->secondary_geometry_count <= 13 && (t1 <= 215 || (rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210 || rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210))) || rec->normalized_coverage <= 66 && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 12 && rec->selector <= 226 && t1 <= 220 && (rec->geometry_percent <= 25 || rec->normalized_coverage <= 80 && ((rec->geometry_count > 5 || rec->secondary_geometry_count > 13) && ((rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210 || rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210)) || rec->geometry_count <= 5 && rec->secondary_geometry_count <= 13 && (t1 <= 215 || (rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210 || rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210)))))
+          else if (((rec->normalized_coverage > 66 || rec->geometry_count > 7 || rec->secondary_geometry_count > 12 || rec->selector > 226 || t1 > 220) && rec->normalized_coverage <= 80 && (((rec->geometry_count > 5 || rec->secondary_geometry_count > 13) && (((rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210) || (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || (rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210))))) || (rec->geometry_count <= 5 && rec->secondary_geometry_count <= 13 && (t1 <= 215 || ((rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210) || (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || (rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210))))))) || (rec->normalized_coverage <= 66 && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 12 && rec->selector <= 226 && t1 <= 220 && (rec->geometry_percent <= 25 || (rec->normalized_coverage <= 80 && (((rec->geometry_count > 5 || rec->secondary_geometry_count > 13) && (((rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210) || (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || (rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210))))) || (rec->geometry_count <= 5 && rec->secondary_geometry_count <= 13 && (t1 <= 215 || ((rec->geometry_count > 4 || rec->secondary_geometry_count > 10) && rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210) || (rec->geometry_count <= 4 && rec->secondary_geometry_count <= 10 && (t1 <= 218 || (rec->geometry_count <= 7 && rec->secondary_geometry_count <= 9 && t1 <= 210))))))))))
             {
               *status = 0;
               *conf = 0;
@@ -3570,7 +3575,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
         }
       if (rec->geometry_count < rec->secondary_geometry_count)
         {
-          if (t0 <= 388 && t1 <= 201 && (rec->secondary_geometry_count > 16 && rec->geometry_count <= 11 && ((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && rec->matched_percent <= 40 && rec->geometry_percent <= 17 || rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || rec->matched_percent <= 40 && rec->geometry_percent <= 17)) || rec->secondary_geometry_count <= 16 && (rec->geometry_percent <= 15 || rec->geometry_count <= 11 && ((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && rec->matched_percent <= 40 && rec->geometry_percent <= 17 || rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || rec->matched_percent <= 40 && rec->geometry_percent <= 17)))))
+          if (t0 <= 388 && t1 <= 201 && ((rec->secondary_geometry_count > 16 && rec->geometry_count <= 11 && (((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && rec->matched_percent <= 40 && rec->geometry_percent <= 17) || (rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || (rec->matched_percent <= 40 && rec->geometry_percent <= 17))))) || (rec->secondary_geometry_count <= 16 && (rec->geometry_percent <= 15 || (rec->geometry_count <= 11 && (((rec->normalized_coverage > 100 || rec->geometry_percent > 35) && rec->matched_percent <= 40 && rec->geometry_percent <= 17) || (rec->normalized_coverage <= 100 && rec->geometry_percent <= 35 && (rec->selector <= 217 || (rec->matched_percent <= 40 && rec->geometry_percent <= 17)))))))))
             {
               *status = 0;
               *conf = 0;
@@ -3626,19 +3631,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
           *status = 0;
           *conf = 0;
         }
-      else if (rec->geometry_count <= 6 && ((rec->secondary_geometry_count > 14 || rec->geometry_percent > 22 || t1 > 208) && rec->secondary_geometry_count <= 8 && rec->normalized_coverage <= 50 && rec->matched_percent <= 45 && t4 <= 664 || rec->secondary_geometry_count <= 14 && rec->geometry_percent <= 22 && t1 <= 208 && (rec->selector <= 224 || rec->secondary_geometry_count <= 8 && rec->normalized_coverage <= 50 && rec->matched_percent <= 45 && t4 <= 664)))
+      else if (rec->geometry_count <= 6 && (((rec->secondary_geometry_count > 14 || rec->geometry_percent > 22 || t1 > 208) && rec->secondary_geometry_count <= 8 && rec->normalized_coverage <= 50 && rec->matched_percent <= 45 && t4 <= 664) || (rec->secondary_geometry_count <= 14 && rec->geometry_percent <= 22 && t1 <= 208 && (rec->selector <= 224 || (rec->secondary_geometry_count <= 8 && rec->normalized_coverage <= 50 && rec->matched_percent <= 45 && t4 <= 664)))))
         {
           *status = 0;
           *conf = 0;
         }
-      if (rec->penalty_flag_b == 1 && (t0 >= 390 && t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count || t0 < 390 && (rec->secondary_geometry_count < 15 || t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count)) || rec->penalty_flag_b != 1 && rec->geometry_count <= 6 && (t0 >= 390 && t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count || t0 < 390 && (rec->secondary_geometry_count < 15 || t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count)))
+      if ((rec->penalty_flag_b == 1 && ((FALSE /* never: t0 >= 390 && t0 < 370 */ && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count) || (t0 < 390 && (rec->secondary_geometry_count < 15 || (t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count))))) || (rec->penalty_flag_b != 1 && rec->geometry_count <= 6 && ((FALSE /* never: t0 >= 390 && t0 < 370 */ && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count) || (t0 < 390 && (rec->secondary_geometry_count < 15 || (t0 < 370 && rec->secondary_geometry_count < 19 && rec->geometry_count < rec->secondary_geometry_count))))))
         {
           *status = 0;
           *conf = 0;
         }
       if (rec->selector != 128)
         {
-          if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+          if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
             {
               *status = 0;
               *conf = 0;
@@ -3675,7 +3680,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                   *status = 0;
                   *conf = 0;
                 }
-              if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+              if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -3699,103 +3704,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                 {
                   const gboolean b26_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                   const gboolean b26_1 = rec->geometry_percent < 40 || b26_0;
-                  const gboolean b26_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b26_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b26_1;
+                  const gboolean b26_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b26_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b26_1);
                   const gboolean b26_3 = rec->geometry_percent < 45 || b26_2;
-                  const gboolean b26_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b26_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b26_3;
+                  const gboolean b26_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b26_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b26_3);
                   const gboolean b26_5 = rec->geometry_percent < 25 || b26_4;
-                  const gboolean b26_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b26_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b26_5;
-                  const gboolean b26_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b26_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b26_6);
-                  const gboolean b26_8 = rec->normalized_coverage >= 90 && b26_4 || rec->normalized_coverage < 90 && b26_7;
+                  const gboolean b26_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b26_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b26_5);
+                  const gboolean b26_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b26_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b26_6));
+                  const gboolean b26_8 = (rec->normalized_coverage >= 90 && b26_4) || (rec->normalized_coverage < 90 && b26_7);
                   const gboolean b26_9 = rec->geometry_percent < 35 || b26_8;
-                  const gboolean b26_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b26_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b26_9;
-                  if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b26_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b26_10)))
+                  const gboolean b26_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b26_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b26_9);
+                  if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b26_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b26_10))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b27_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                   const gboolean b27_1 = rec->geometry_percent < 60 || b27_0;
-                  const gboolean b27_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b27_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b27_1;
+                  const gboolean b27_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b27_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b27_1);
                   const gboolean b27_3 = rec->geometry_percent < 35 || b27_2;
-                  const gboolean b27_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b27_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b27_3;
+                  const gboolean b27_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b27_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b27_3);
                   const gboolean b27_5 = rec->geometry_percent < 22 || b27_4;
-                  const gboolean b27_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b27_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b27_5;
+                  const gboolean b27_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b27_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b27_5);
                   const gboolean b27_7 = rec->geometry_percent < 15 || b27_6;
-                  const gboolean b27_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b27_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b27_7;
-                  const gboolean b27_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b27_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b27_8);
-                  const gboolean b27_10 = rec->normalized_coverage >= 95 && b27_6 || rec->normalized_coverage < 95 && b27_9;
+                  const gboolean b27_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b27_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b27_7);
+                  const gboolean b27_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b27_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b27_8));
+                  const gboolean b27_10 = (rec->normalized_coverage >= 95 && b27_6) || (rec->normalized_coverage < 95 && b27_9);
                   const gboolean b27_11 = rec->geometry_percent < 10 || b27_10;
-                  const gboolean b27_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b27_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b27_11;
-                  const gboolean b27_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b27_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b27_12);
-                  const gboolean b27_14 = rec->normalized_coverage >= 120 && b27_10 || rec->normalized_coverage < 120 && b27_13;
-                  if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b27_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b27_14)))
+                  const gboolean b27_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b27_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b27_11);
+                  const gboolean b27_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b27_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b27_12));
+                  const gboolean b27_14 = (rec->normalized_coverage >= 120 && b27_10) || (rec->normalized_coverage < 120 && b27_13);
+                  if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b27_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b27_14))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b28_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                   const gboolean b28_1 = rec->geometry_percent < 28 || b28_0;
-                  const gboolean b28_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b28_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b28_1;
+                  const gboolean b28_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b28_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b28_1);
                   const gboolean b28_3 = rec->geometry_percent < 50 || b28_2;
-                  const gboolean b28_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b28_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b28_3;
+                  const gboolean b28_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b28_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b28_3);
                   const gboolean b28_5 = rec->geometry_percent < 30 || b28_4;
-                  const gboolean b28_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b28_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b28_5;
+                  const gboolean b28_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b28_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b28_5);
                   const gboolean b28_7 = rec->geometry_percent < 25 || b28_6;
-                  const gboolean b28_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b28_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b28_7;
-                  const gboolean b28_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b28_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b28_8);
-                  const gboolean b28_10 = rec->normalized_coverage >= 128 && b28_6 || rec->normalized_coverage < 128 && b28_9;
-                  if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b28_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b28_10)))
+                  const gboolean b28_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b28_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b28_7);
+                  const gboolean b28_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b28_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b28_8));
+                  const gboolean b28_10 = (rec->normalized_coverage >= 128 && b28_6) || (rec->normalized_coverage < 128 && b28_9);
+                  if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b28_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b28_10))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b29_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                   const gboolean b29_1 = rec->geometry_percent < 15 || b29_0;
-                  const gboolean b29_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b29_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b29_1;
+                  const gboolean b29_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b29_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b29_1);
                   const gboolean b29_3 = rec->secondary_geometry_count < 12 || b29_2;
-                  const gboolean b29_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b29_2 || rec->normalized_coverage < 75 && t0 < 425 && b29_3;
+                  const gboolean b29_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b29_2) || (rec->normalized_coverage < 75 && t0 < 425 && b29_3);
                   const gboolean b29_5 = rec->secondary_geometry_count < 16 || b29_4;
-                  const gboolean b29_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b29_4 || rec->normalized_coverage < 90 && t0 < 405 && b29_5;
+                  const gboolean b29_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b29_4) || (rec->normalized_coverage < 90 && t0 < 405 && b29_5);
                   const gboolean b29_7 = rec->secondary_geometry_count < 21 || b29_6;
-                  const gboolean b29_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b29_6 || rec->normalized_coverage < 110 && t0 < 390 && b29_7;
+                  const gboolean b29_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b29_6) || (rec->normalized_coverage < 110 && t0 < 390 && b29_7);
                   const gboolean b29_9 = rec->secondary_geometry_count < 14 || b29_8;
-                  const gboolean b29_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b29_8 || rec->normalized_coverage < 130 && t0 < 415 && b29_9;
-                  if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b29_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b29_10)))
+                  const gboolean b29_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b29_8) || (rec->normalized_coverage < 130 && t0 < 415 && b29_9);
+                  if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b29_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b29_10))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
                   const gboolean b30_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                   const gboolean b30_1 = rec->secondary_geometry_count < 15 || b30_0;
-                  const gboolean b30_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b30_0 || rec->normalized_coverage < 90 && t0 < 430 && b30_1;
+                  const gboolean b30_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b30_0) || (rec->normalized_coverage < 90 && t0 < 430 && b30_1);
                   const gboolean b30_3 = rec->secondary_geometry_count < 20 || b30_2;
-                  const gboolean b30_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b30_2 || rec->normalized_coverage < 95 && t0 < 405 && b30_3;
+                  const gboolean b30_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b30_2) || (rec->normalized_coverage < 95 && t0 < 405 && b30_3);
                   const gboolean b30_5 = rec->secondary_geometry_count < 22 || b30_4;
-                  const gboolean b30_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b30_4 || rec->normalized_coverage < 100 && t0 < 400 && b30_5;
+                  const gboolean b30_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b30_4) || (rec->normalized_coverage < 100 && t0 < 400 && b30_5);
                   const gboolean b30_7 = rec->secondary_geometry_count < 7 || b30_6;
-                  const gboolean b30_8 = t0 >= 435 && b30_6 || t0 < 435 && b30_7;
+                  const gboolean b30_8 = (t0 >= 435 && b30_6) || (t0 < 435 && b30_7);
                   const gboolean b30_9 = rec->secondary_geometry_count < 10 || b30_8;
-                  const gboolean b30_10 = t0 >= 430 && b30_8 || t0 < 430 && b30_9;
-                  const gboolean b30_11 = t0 >= 420 && b30_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b30_10);
-                  const gboolean b30_12 = rec->normalized_coverage >= 120 && b30_6 || rec->normalized_coverage < 120 && b30_11;
+                  const gboolean b30_10 = (t0 >= 430 && b30_8) || (t0 < 430 && b30_9);
+                  const gboolean b30_11 = (t0 >= 420 && b30_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b30_10));
+                  const gboolean b30_12 = (rec->normalized_coverage >= 120 && b30_6) || (rec->normalized_coverage < 120 && b30_11);
                   const gboolean b30_13 = rec->secondary_geometry_count < 12 || b30_12;
-                  const gboolean b30_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b30_12 || rec->normalized_coverage < 140 && t0 < 430 && b30_13;
-                  if (t3 >= 159 && (t0 >= 380 && b30_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b30_14)))
+                  const gboolean b30_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b30_12) || (rec->normalized_coverage < 140 && t0 < 430 && b30_13);
+                  if (t3 >= 159 && ((t0 >= 380 && b30_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b30_14))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
-                  if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                  if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
-                  else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                  else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                     {
                       *status = 0;
                       *conf = 0;
                     }
-                  else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                  else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -3803,19 +3808,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                   else
                     {
                       const gboolean b31_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                      const gboolean b31_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b31_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b31_0);
+                      const gboolean b31_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b31_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b31_0));
                       const gboolean b31_2 = t3 > 190 && b31_1;
                       const gboolean b31_3 = rec->geometry_percent < 40 || b31_2;
-                      const gboolean b31_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b31_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b31_3;
+                      const gboolean b31_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b31_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b31_3);
                       const gboolean b31_5 = rec->geometry_percent < 30 || b31_4;
-                      const gboolean b31_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b31_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b31_5;
+                      const gboolean b31_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b31_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b31_5);
                       const gboolean b31_7 = rec->geometry_percent < 30 || b31_6;
-                      const gboolean b31_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b31_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b31_7;
-                      const gboolean b31_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b31_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b31_8);
-                      const gboolean b31_10 = t3 <= 185 && b31_2 || t3 > 185 && b31_9;
+                      const gboolean b31_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b31_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b31_7);
+                      const gboolean b31_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b31_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b31_8));
+                      const gboolean b31_10 = (t3 <= 185 && b31_2) || (t3 > 185 && b31_9);
                       const gboolean b31_11 = rec->geometry_percent < 50 || b31_10;
-                      const gboolean b31_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b31_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b31_11;
-                      if (t3 <= 180 && b31_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b31_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b31_12)))
+                      const gboolean b31_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b31_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b31_11);
+                      if ((t3 <= 180 && b31_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b31_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b31_12)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -3833,7 +3838,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
             }
           if (rec->selector != 128)
             {
-              if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+              if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -3870,7 +3875,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       *status = 0;
                       *conf = 0;
                     }
-                  if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+                  if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -3894,103 +3899,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                     {
                       const gboolean b32_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                       const gboolean b32_1 = rec->geometry_percent < 40 || b32_0;
-                      const gboolean b32_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b32_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b32_1;
+                      const gboolean b32_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b32_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b32_1);
                       const gboolean b32_3 = rec->geometry_percent < 45 || b32_2;
-                      const gboolean b32_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b32_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b32_3;
+                      const gboolean b32_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b32_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b32_3);
                       const gboolean b32_5 = rec->geometry_percent < 25 || b32_4;
-                      const gboolean b32_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b32_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b32_5;
-                      const gboolean b32_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b32_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b32_6);
-                      const gboolean b32_8 = rec->normalized_coverage >= 90 && b32_4 || rec->normalized_coverage < 90 && b32_7;
+                      const gboolean b32_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b32_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b32_5);
+                      const gboolean b32_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b32_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b32_6));
+                      const gboolean b32_8 = (rec->normalized_coverage >= 90 && b32_4) || (rec->normalized_coverage < 90 && b32_7);
                       const gboolean b32_9 = rec->geometry_percent < 35 || b32_8;
-                      const gboolean b32_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b32_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b32_9;
-                      if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b32_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b32_10)))
+                      const gboolean b32_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b32_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b32_9);
+                      if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b32_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b32_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b33_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                       const gboolean b33_1 = rec->geometry_percent < 60 || b33_0;
-                      const gboolean b33_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b33_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b33_1;
+                      const gboolean b33_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b33_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b33_1);
                       const gboolean b33_3 = rec->geometry_percent < 35 || b33_2;
-                      const gboolean b33_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b33_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b33_3;
+                      const gboolean b33_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b33_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b33_3);
                       const gboolean b33_5 = rec->geometry_percent < 22 || b33_4;
-                      const gboolean b33_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b33_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b33_5;
+                      const gboolean b33_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b33_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b33_5);
                       const gboolean b33_7 = rec->geometry_percent < 15 || b33_6;
-                      const gboolean b33_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b33_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b33_7;
-                      const gboolean b33_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b33_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b33_8);
-                      const gboolean b33_10 = rec->normalized_coverage >= 95 && b33_6 || rec->normalized_coverage < 95 && b33_9;
+                      const gboolean b33_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b33_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b33_7);
+                      const gboolean b33_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b33_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b33_8));
+                      const gboolean b33_10 = (rec->normalized_coverage >= 95 && b33_6) || (rec->normalized_coverage < 95 && b33_9);
                       const gboolean b33_11 = rec->geometry_percent < 10 || b33_10;
-                      const gboolean b33_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b33_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b33_11;
-                      const gboolean b33_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b33_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b33_12);
-                      const gboolean b33_14 = rec->normalized_coverage >= 120 && b33_10 || rec->normalized_coverage < 120 && b33_13;
-                      if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b33_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b33_14)))
+                      const gboolean b33_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b33_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b33_11);
+                      const gboolean b33_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b33_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b33_12));
+                      const gboolean b33_14 = (rec->normalized_coverage >= 120 && b33_10) || (rec->normalized_coverage < 120 && b33_13);
+                      if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b33_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b33_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b34_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                       const gboolean b34_1 = rec->geometry_percent < 28 || b34_0;
-                      const gboolean b34_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b34_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b34_1;
+                      const gboolean b34_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b34_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b34_1);
                       const gboolean b34_3 = rec->geometry_percent < 50 || b34_2;
-                      const gboolean b34_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b34_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b34_3;
+                      const gboolean b34_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b34_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b34_3);
                       const gboolean b34_5 = rec->geometry_percent < 30 || b34_4;
-                      const gboolean b34_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b34_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b34_5;
+                      const gboolean b34_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b34_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b34_5);
                       const gboolean b34_7 = rec->geometry_percent < 25 || b34_6;
-                      const gboolean b34_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b34_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b34_7;
-                      const gboolean b34_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b34_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b34_8);
-                      const gboolean b34_10 = rec->normalized_coverage >= 128 && b34_6 || rec->normalized_coverage < 128 && b34_9;
-                      if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b34_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b34_10)))
+                      const gboolean b34_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b34_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b34_7);
+                      const gboolean b34_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b34_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b34_8));
+                      const gboolean b34_10 = (rec->normalized_coverage >= 128 && b34_6) || (rec->normalized_coverage < 128 && b34_9);
+                      if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b34_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b34_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b35_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                       const gboolean b35_1 = rec->geometry_percent < 15 || b35_0;
-                      const gboolean b35_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b35_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b35_1;
+                      const gboolean b35_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b35_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b35_1);
                       const gboolean b35_3 = rec->secondary_geometry_count < 12 || b35_2;
-                      const gboolean b35_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b35_2 || rec->normalized_coverage < 75 && t0 < 425 && b35_3;
+                      const gboolean b35_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b35_2) || (rec->normalized_coverage < 75 && t0 < 425 && b35_3);
                       const gboolean b35_5 = rec->secondary_geometry_count < 16 || b35_4;
-                      const gboolean b35_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b35_4 || rec->normalized_coverage < 90 && t0 < 405 && b35_5;
+                      const gboolean b35_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b35_4) || (rec->normalized_coverage < 90 && t0 < 405 && b35_5);
                       const gboolean b35_7 = rec->secondary_geometry_count < 21 || b35_6;
-                      const gboolean b35_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b35_6 || rec->normalized_coverage < 110 && t0 < 390 && b35_7;
+                      const gboolean b35_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b35_6) || (rec->normalized_coverage < 110 && t0 < 390 && b35_7);
                       const gboolean b35_9 = rec->secondary_geometry_count < 14 || b35_8;
-                      const gboolean b35_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b35_8 || rec->normalized_coverage < 130 && t0 < 415 && b35_9;
-                      if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b35_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b35_10)))
+                      const gboolean b35_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b35_8) || (rec->normalized_coverage < 130 && t0 < 415 && b35_9);
+                      if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b35_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b35_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b36_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                       const gboolean b36_1 = rec->secondary_geometry_count < 15 || b36_0;
-                      const gboolean b36_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b36_0 || rec->normalized_coverage < 90 && t0 < 430 && b36_1;
+                      const gboolean b36_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b36_0) || (rec->normalized_coverage < 90 && t0 < 430 && b36_1);
                       const gboolean b36_3 = rec->secondary_geometry_count < 20 || b36_2;
-                      const gboolean b36_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b36_2 || rec->normalized_coverage < 95 && t0 < 405 && b36_3;
+                      const gboolean b36_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b36_2) || (rec->normalized_coverage < 95 && t0 < 405 && b36_3);
                       const gboolean b36_5 = rec->secondary_geometry_count < 22 || b36_4;
-                      const gboolean b36_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b36_4 || rec->normalized_coverage < 100 && t0 < 400 && b36_5;
+                      const gboolean b36_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b36_4) || (rec->normalized_coverage < 100 && t0 < 400 && b36_5);
                       const gboolean b36_7 = rec->secondary_geometry_count < 7 || b36_6;
-                      const gboolean b36_8 = t0 >= 435 && b36_6 || t0 < 435 && b36_7;
+                      const gboolean b36_8 = (t0 >= 435 && b36_6) || (t0 < 435 && b36_7);
                       const gboolean b36_9 = rec->secondary_geometry_count < 10 || b36_8;
-                      const gboolean b36_10 = t0 >= 430 && b36_8 || t0 < 430 && b36_9;
-                      const gboolean b36_11 = t0 >= 420 && b36_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b36_10);
-                      const gboolean b36_12 = rec->normalized_coverage >= 120 && b36_6 || rec->normalized_coverage < 120 && b36_11;
+                      const gboolean b36_10 = (t0 >= 430 && b36_8) || (t0 < 430 && b36_9);
+                      const gboolean b36_11 = (t0 >= 420 && b36_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b36_10));
+                      const gboolean b36_12 = (rec->normalized_coverage >= 120 && b36_6) || (rec->normalized_coverage < 120 && b36_11);
                       const gboolean b36_13 = rec->secondary_geometry_count < 12 || b36_12;
-                      const gboolean b36_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b36_12 || rec->normalized_coverage < 140 && t0 < 430 && b36_13;
-                      if (t3 >= 159 && (t0 >= 380 && b36_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b36_14)))
+                      const gboolean b36_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b36_12) || (rec->normalized_coverage < 140 && t0 < 430 && b36_13);
+                      if (t3 >= 159 && ((t0 >= 380 && b36_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b36_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                      if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                      else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                      else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -3998,19 +4003,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       else
                         {
                           const gboolean b37_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                          const gboolean b37_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b37_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b37_0);
+                          const gboolean b37_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b37_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b37_0));
                           const gboolean b37_2 = t3 > 190 && b37_1;
                           const gboolean b37_3 = rec->geometry_percent < 40 || b37_2;
-                          const gboolean b37_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b37_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b37_3;
+                          const gboolean b37_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b37_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b37_3);
                           const gboolean b37_5 = rec->geometry_percent < 30 || b37_4;
-                          const gboolean b37_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b37_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b37_5;
+                          const gboolean b37_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b37_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b37_5);
                           const gboolean b37_7 = rec->geometry_percent < 30 || b37_6;
-                          const gboolean b37_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b37_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b37_7;
-                          const gboolean b37_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b37_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b37_8);
-                          const gboolean b37_10 = t3 <= 185 && b37_2 || t3 > 185 && b37_9;
+                          const gboolean b37_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b37_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b37_7);
+                          const gboolean b37_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b37_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b37_8));
+                          const gboolean b37_10 = (t3 <= 185 && b37_2) || (t3 > 185 && b37_9);
                           const gboolean b37_11 = rec->geometry_percent < 50 || b37_10;
-                          const gboolean b37_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b37_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b37_11;
-                          if (t3 <= 180 && b37_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b37_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b37_12)))
+                          const gboolean b37_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b37_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b37_11);
+                          if ((t3 <= 180 && b37_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b37_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b37_12)))))
                             {
                               *status = 0;
                               *conf = 0;
@@ -4021,7 +4026,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
             }
           else if (rec->study_metric_20 >= 175)
             {
-              if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+              if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -4058,7 +4063,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       *status = 0;
                       *conf = 0;
                     }
-                  if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+                  if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -4082,103 +4087,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                     {
                       const gboolean b38_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                       const gboolean b38_1 = rec->geometry_percent < 40 || b38_0;
-                      const gboolean b38_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b38_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b38_1;
+                      const gboolean b38_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b38_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b38_1);
                       const gboolean b38_3 = rec->geometry_percent < 45 || b38_2;
-                      const gboolean b38_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b38_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b38_3;
+                      const gboolean b38_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b38_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b38_3);
                       const gboolean b38_5 = rec->geometry_percent < 25 || b38_4;
-                      const gboolean b38_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b38_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b38_5;
-                      const gboolean b38_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b38_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b38_6);
-                      const gboolean b38_8 = rec->normalized_coverage >= 90 && b38_4 || rec->normalized_coverage < 90 && b38_7;
+                      const gboolean b38_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b38_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b38_5);
+                      const gboolean b38_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b38_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b38_6));
+                      const gboolean b38_8 = (rec->normalized_coverage >= 90 && b38_4) || (rec->normalized_coverage < 90 && b38_7);
                       const gboolean b38_9 = rec->geometry_percent < 35 || b38_8;
-                      const gboolean b38_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b38_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b38_9;
-                      if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b38_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b38_10)))
+                      const gboolean b38_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b38_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b38_9);
+                      if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b38_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b38_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b39_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                       const gboolean b39_1 = rec->geometry_percent < 60 || b39_0;
-                      const gboolean b39_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b39_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b39_1;
+                      const gboolean b39_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b39_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b39_1);
                       const gboolean b39_3 = rec->geometry_percent < 35 || b39_2;
-                      const gboolean b39_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b39_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b39_3;
+                      const gboolean b39_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b39_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b39_3);
                       const gboolean b39_5 = rec->geometry_percent < 22 || b39_4;
-                      const gboolean b39_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b39_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b39_5;
+                      const gboolean b39_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b39_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b39_5);
                       const gboolean b39_7 = rec->geometry_percent < 15 || b39_6;
-                      const gboolean b39_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b39_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b39_7;
-                      const gboolean b39_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b39_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b39_8);
-                      const gboolean b39_10 = rec->normalized_coverage >= 95 && b39_6 || rec->normalized_coverage < 95 && b39_9;
+                      const gboolean b39_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b39_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b39_7);
+                      const gboolean b39_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b39_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b39_8));
+                      const gboolean b39_10 = (rec->normalized_coverage >= 95 && b39_6) || (rec->normalized_coverage < 95 && b39_9);
                       const gboolean b39_11 = rec->geometry_percent < 10 || b39_10;
-                      const gboolean b39_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b39_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b39_11;
-                      const gboolean b39_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b39_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b39_12);
-                      const gboolean b39_14 = rec->normalized_coverage >= 120 && b39_10 || rec->normalized_coverage < 120 && b39_13;
-                      if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b39_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b39_14)))
+                      const gboolean b39_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b39_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b39_11);
+                      const gboolean b39_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b39_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b39_12));
+                      const gboolean b39_14 = (rec->normalized_coverage >= 120 && b39_10) || (rec->normalized_coverage < 120 && b39_13);
+                      if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b39_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b39_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b40_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                       const gboolean b40_1 = rec->geometry_percent < 28 || b40_0;
-                      const gboolean b40_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b40_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b40_1;
+                      const gboolean b40_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b40_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b40_1);
                       const gboolean b40_3 = rec->geometry_percent < 50 || b40_2;
-                      const gboolean b40_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b40_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b40_3;
+                      const gboolean b40_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b40_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b40_3);
                       const gboolean b40_5 = rec->geometry_percent < 30 || b40_4;
-                      const gboolean b40_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b40_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b40_5;
+                      const gboolean b40_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b40_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b40_5);
                       const gboolean b40_7 = rec->geometry_percent < 25 || b40_6;
-                      const gboolean b40_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b40_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b40_7;
-                      const gboolean b40_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b40_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b40_8);
-                      const gboolean b40_10 = rec->normalized_coverage >= 128 && b40_6 || rec->normalized_coverage < 128 && b40_9;
-                      if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b40_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b40_10)))
+                      const gboolean b40_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b40_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b40_7);
+                      const gboolean b40_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b40_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b40_8));
+                      const gboolean b40_10 = (rec->normalized_coverage >= 128 && b40_6) || (rec->normalized_coverage < 128 && b40_9);
+                      if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b40_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b40_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b41_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                       const gboolean b41_1 = rec->geometry_percent < 15 || b41_0;
-                      const gboolean b41_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b41_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b41_1;
+                      const gboolean b41_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b41_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b41_1);
                       const gboolean b41_3 = rec->secondary_geometry_count < 12 || b41_2;
-                      const gboolean b41_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b41_2 || rec->normalized_coverage < 75 && t0 < 425 && b41_3;
+                      const gboolean b41_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b41_2) || (rec->normalized_coverage < 75 && t0 < 425 && b41_3);
                       const gboolean b41_5 = rec->secondary_geometry_count < 16 || b41_4;
-                      const gboolean b41_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b41_4 || rec->normalized_coverage < 90 && t0 < 405 && b41_5;
+                      const gboolean b41_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b41_4) || (rec->normalized_coverage < 90 && t0 < 405 && b41_5);
                       const gboolean b41_7 = rec->secondary_geometry_count < 21 || b41_6;
-                      const gboolean b41_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b41_6 || rec->normalized_coverage < 110 && t0 < 390 && b41_7;
+                      const gboolean b41_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b41_6) || (rec->normalized_coverage < 110 && t0 < 390 && b41_7);
                       const gboolean b41_9 = rec->secondary_geometry_count < 14 || b41_8;
-                      const gboolean b41_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b41_8 || rec->normalized_coverage < 130 && t0 < 415 && b41_9;
-                      if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b41_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b41_10)))
+                      const gboolean b41_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b41_8) || (rec->normalized_coverage < 130 && t0 < 415 && b41_9);
+                      if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b41_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b41_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b42_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                       const gboolean b42_1 = rec->secondary_geometry_count < 15 || b42_0;
-                      const gboolean b42_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b42_0 || rec->normalized_coverage < 90 && t0 < 430 && b42_1;
+                      const gboolean b42_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b42_0) || (rec->normalized_coverage < 90 && t0 < 430 && b42_1);
                       const gboolean b42_3 = rec->secondary_geometry_count < 20 || b42_2;
-                      const gboolean b42_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b42_2 || rec->normalized_coverage < 95 && t0 < 405 && b42_3;
+                      const gboolean b42_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b42_2) || (rec->normalized_coverage < 95 && t0 < 405 && b42_3);
                       const gboolean b42_5 = rec->secondary_geometry_count < 22 || b42_4;
-                      const gboolean b42_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b42_4 || rec->normalized_coverage < 100 && t0 < 400 && b42_5;
+                      const gboolean b42_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b42_4) || (rec->normalized_coverage < 100 && t0 < 400 && b42_5);
                       const gboolean b42_7 = rec->secondary_geometry_count < 7 || b42_6;
-                      const gboolean b42_8 = t0 >= 435 && b42_6 || t0 < 435 && b42_7;
+                      const gboolean b42_8 = (t0 >= 435 && b42_6) || (t0 < 435 && b42_7);
                       const gboolean b42_9 = rec->secondary_geometry_count < 10 || b42_8;
-                      const gboolean b42_10 = t0 >= 430 && b42_8 || t0 < 430 && b42_9;
-                      const gboolean b42_11 = t0 >= 420 && b42_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b42_10);
-                      const gboolean b42_12 = rec->normalized_coverage >= 120 && b42_6 || rec->normalized_coverage < 120 && b42_11;
+                      const gboolean b42_10 = (t0 >= 430 && b42_8) || (t0 < 430 && b42_9);
+                      const gboolean b42_11 = (t0 >= 420 && b42_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b42_10));
+                      const gboolean b42_12 = (rec->normalized_coverage >= 120 && b42_6) || (rec->normalized_coverage < 120 && b42_11);
                       const gboolean b42_13 = rec->secondary_geometry_count < 12 || b42_12;
-                      const gboolean b42_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b42_12 || rec->normalized_coverage < 140 && t0 < 430 && b42_13;
-                      if (t3 >= 159 && (t0 >= 380 && b42_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b42_14)))
+                      const gboolean b42_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b42_12) || (rec->normalized_coverage < 140 && t0 < 430 && b42_13);
+                      if (t3 >= 159 && ((t0 >= 380 && b42_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b42_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                      if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                      else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                      else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -4186,19 +4191,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       else
                         {
                           const gboolean b43_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                          const gboolean b43_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b43_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b43_0);
+                          const gboolean b43_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b43_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b43_0));
                           const gboolean b43_2 = t3 > 190 && b43_1;
                           const gboolean b43_3 = rec->geometry_percent < 40 || b43_2;
-                          const gboolean b43_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b43_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b43_3;
+                          const gboolean b43_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b43_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b43_3);
                           const gboolean b43_5 = rec->geometry_percent < 30 || b43_4;
-                          const gboolean b43_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b43_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b43_5;
+                          const gboolean b43_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b43_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b43_5);
                           const gboolean b43_7 = rec->geometry_percent < 30 || b43_6;
-                          const gboolean b43_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b43_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b43_7;
-                          const gboolean b43_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b43_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b43_8);
-                          const gboolean b43_10 = t3 <= 185 && b43_2 || t3 > 185 && b43_9;
+                          const gboolean b43_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b43_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b43_7);
+                          const gboolean b43_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b43_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b43_8));
+                          const gboolean b43_10 = (t3 <= 185 && b43_2) || (t3 > 185 && b43_9);
                           const gboolean b43_11 = rec->geometry_percent < 50 || b43_10;
-                          const gboolean b43_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b43_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b43_11;
-                          if (t3 <= 180 && b43_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b43_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b43_12)))
+                          const gboolean b43_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b43_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b43_11);
+                          if ((t3 <= 180 && b43_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b43_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b43_12)))))
                             {
                               *status = 0;
                               *conf = 0;
@@ -4224,7 +4229,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                   *status = 0;
                   *conf = 0;
                 }
-              if (rec->geometry_count < rec->secondary_geometry_count && ((rec->geometry_count > 5 || t1 > 202) && ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)) || rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || (rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203 || rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))
+              if (rec->geometry_count < rec->secondary_geometry_count && (((rec->geometry_count > 5 || t1 > 202) && (((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203))))) || (rec->geometry_count <= 5 && t1 <= 202 && (t2 <= 201 || ((rec->normalized_coverage > 85 || rec->geometry_count > 5 || t1 > 212) && rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203) || (rec->normalized_coverage <= 85 && rec->geometry_count <= 5 && t1 <= 212 && (t2 <= 201 || (rec->normalized_coverage <= 40 && rec->geometry_count <= 6 && t1 <= 218 && t2 <= 203)))))))
                 {
                   *status = 0;
                   *conf = 0;
@@ -4261,7 +4266,7 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       *status = 0;
                       *conf = 0;
                     }
-                  if (*status != 0 && ((rec->secondary_geometry_count > 8 || t0 > 390) && ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)) || rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || (rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205 || rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))
+                  if (*status != 0 && (((rec->secondary_geometry_count > 8 || t0 > 390) && (((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205))))) || (rec->secondary_geometry_count <= 8 && t0 <= 390 && (t1 < 216 || ((rec->secondary_geometry_count > 11 || t0 > 385) && rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205) || (rec->secondary_geometry_count <= 11 && t0 <= 385 && (t1 < 210 || (rec->secondary_geometry_count <= 15 && t0 <= 380 && t1 < 205)))))))
                     {
                       *status = 0;
                       *conf = 0;
@@ -4285,103 +4290,103 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                     {
                       const gboolean b44_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 50;
                       const gboolean b44_1 = rec->geometry_percent < 40 || b44_0;
-                      const gboolean b44_2 = (rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b44_0 || rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b44_1;
+                      const gboolean b44_2 = ((rec->normalized_coverage >= 60 || t0 >= 420 || rec->secondary_geometry_count >= 18) && b44_0) || (rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 18 && b44_1);
                       const gboolean b44_3 = rec->geometry_percent < 45 || b44_2;
-                      const gboolean b44_4 = (rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b44_2 || rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b44_3;
+                      const gboolean b44_4 = ((rec->normalized_coverage >= 70 || t0 >= 420 || rec->secondary_geometry_count >= 12) && b44_2) || (rec->normalized_coverage < 70 && t0 < 420 && rec->secondary_geometry_count < 12 && b44_3);
                       const gboolean b44_5 = rec->geometry_percent < 25 || b44_4;
-                      const gboolean b44_6 = (t0 >= 410 || rec->secondary_geometry_count >= 16) && b44_4 || t0 < 410 && rec->secondary_geometry_count < 16 && b44_5;
-                      const gboolean b44_7 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b44_6 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b44_6);
-                      const gboolean b44_8 = rec->normalized_coverage >= 90 && b44_4 || rec->normalized_coverage < 90 && b44_7;
+                      const gboolean b44_6 = ((t0 >= 410 || rec->secondary_geometry_count >= 16) && b44_4) || (t0 < 410 && rec->secondary_geometry_count < 16 && b44_5);
+                      const gboolean b44_7 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b44_6) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 32 || b44_6));
+                      const gboolean b44_8 = (rec->normalized_coverage >= 90 && b44_4) || (rec->normalized_coverage < 90 && b44_7);
                       const gboolean b44_9 = rec->geometry_percent < 35 || b44_8;
-                      const gboolean b44_10 = (rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b44_8 || rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b44_9;
-                      if (t3 > 100 && ((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b44_10 || rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b44_10)))
+                      const gboolean b44_10 = ((rec->normalized_coverage >= 128 || t0 >= 380 || rec->secondary_geometry_count >= 17) && b44_8) || (rec->normalized_coverage < 128 && t0 < 380 && rec->secondary_geometry_count < 17 && b44_9);
+                      if (t3 > 100 && (((rec->normalized_coverage >= 135 || t0 >= 395 || rec->secondary_geometry_count >= 15) && b44_10) || (rec->normalized_coverage < 135 && t0 < 395 && rec->secondary_geometry_count < 15 && (rec->geometry_percent < 15 || b44_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b45_0 = rec->normalized_coverage < 50 && t0 < 420 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 55;
                       const gboolean b45_1 = rec->geometry_percent < 60 || b45_0;
-                      const gboolean b45_2 = (rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b45_0 || rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b45_1;
+                      const gboolean b45_2 = ((rec->normalized_coverage >= 60 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b45_0) || (rec->normalized_coverage < 60 && t0 < 405 && rec->secondary_geometry_count < 20 && b45_1);
                       const gboolean b45_3 = rec->geometry_percent < 35 || b45_2;
-                      const gboolean b45_4 = (rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b45_2 || rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b45_3;
+                      const gboolean b45_4 = ((rec->normalized_coverage >= 70 || t0 >= 412 || rec->secondary_geometry_count >= 14) && b45_2) || (rec->normalized_coverage < 70 && t0 < 412 && rec->secondary_geometry_count < 14 && b45_3);
                       const gboolean b45_5 = rec->geometry_percent < 22 || b45_4;
-                      const gboolean b45_6 = (rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b45_4 || rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b45_5;
+                      const gboolean b45_6 = ((rec->normalized_coverage >= 80 || t0 >= 412 || rec->secondary_geometry_count >= 13) && b45_4) || (rec->normalized_coverage < 80 && t0 < 412 && rec->secondary_geometry_count < 13 && b45_5);
                       const gboolean b45_7 = rec->geometry_percent < 15 || b45_6;
-                      const gboolean b45_8 = (t0 >= 415 || rec->secondary_geometry_count >= 11) && b45_6 || t0 < 415 && rec->secondary_geometry_count < 11 && b45_7;
-                      const gboolean b45_9 = (t0 >= 390 || rec->secondary_geometry_count >= 17) && b45_8 || t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b45_8);
-                      const gboolean b45_10 = rec->normalized_coverage >= 95 && b45_6 || rec->normalized_coverage < 95 && b45_9;
+                      const gboolean b45_8 = ((t0 >= 415 || rec->secondary_geometry_count >= 11) && b45_6) || (t0 < 415 && rec->secondary_geometry_count < 11 && b45_7);
+                      const gboolean b45_9 = ((t0 >= 390 || rec->secondary_geometry_count >= 17) && b45_8) || (t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 25 || b45_8));
+                      const gboolean b45_10 = (rec->normalized_coverage >= 95 && b45_6) || (rec->normalized_coverage < 95 && b45_9);
                       const gboolean b45_11 = rec->geometry_percent < 10 || b45_10;
-                      const gboolean b45_12 = (t0 >= 395 || rec->secondary_geometry_count >= 11) && b45_10 || t0 < 395 && rec->secondary_geometry_count < 11 && b45_11;
-                      const gboolean b45_13 = (t0 >= 390 || rec->secondary_geometry_count >= 19) && b45_12 || t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b45_12);
-                      const gboolean b45_14 = rec->normalized_coverage >= 120 && b45_10 || rec->normalized_coverage < 120 && b45_13;
-                      if (t3 > 115 && ((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b45_14 || rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b45_14)))
+                      const gboolean b45_12 = ((t0 >= 395 || rec->secondary_geometry_count >= 11) && b45_10) || (t0 < 395 && rec->secondary_geometry_count < 11 && b45_11);
+                      const gboolean b45_13 = ((t0 >= 390 || rec->secondary_geometry_count >= 19) && b45_12) || (t0 < 390 && rec->secondary_geometry_count < 19 && (rec->geometry_percent < 20 || b45_12));
+                      const gboolean b45_14 = (rec->normalized_coverage >= 120 && b45_10) || (rec->normalized_coverage < 120 && b45_13);
+                      if (t3 > 115 && (((rec->normalized_coverage >= 130 || t0 >= 390 || rec->secondary_geometry_count >= 17) && b45_14) || (rec->normalized_coverage < 130 && t0 < 390 && rec->secondary_geometry_count < 17 && (rec->geometry_percent < 18 || b45_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b46_0 = rec->normalized_coverage < 60 && t0 < 420 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 55;
                       const gboolean b46_1 = rec->geometry_percent < 28 || b46_0;
-                      const gboolean b46_2 = (rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b46_0 || rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b46_1;
+                      const gboolean b46_2 = ((rec->normalized_coverage >= 80 || t0 >= 416 || rec->secondary_geometry_count >= 10) && b46_0) || (rec->normalized_coverage < 80 && t0 < 416 && rec->secondary_geometry_count < 10 && b46_1);
                       const gboolean b46_3 = rec->geometry_percent < 50 || b46_2;
-                      const gboolean b46_4 = (rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b46_2 || rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b46_3;
+                      const gboolean b46_4 = ((rec->normalized_coverage >= 90 || t0 >= 405 || rec->secondary_geometry_count >= 20) && b46_2) || (rec->normalized_coverage < 90 && t0 < 405 && rec->secondary_geometry_count < 20 && b46_3);
                       const gboolean b46_5 = rec->geometry_percent < 30 || b46_4;
-                      const gboolean b46_6 = (rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b46_4 || rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b46_5;
+                      const gboolean b46_6 = ((rec->normalized_coverage >= 115 || t0 >= 380 || rec->secondary_geometry_count >= 18) && b46_4) || (rec->normalized_coverage < 115 && t0 < 380 && rec->secondary_geometry_count < 18 && b46_5);
                       const gboolean b46_7 = rec->geometry_percent < 25 || b46_6;
-                      const gboolean b46_8 = (t0 >= 406 || rec->secondary_geometry_count >= 19) && b46_6 || t0 < 406 && rec->secondary_geometry_count < 19 && b46_7;
-                      const gboolean b46_9 = (t0 >= 420 || rec->secondary_geometry_count >= 13) && b46_8 || t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b46_8);
-                      const gboolean b46_10 = rec->normalized_coverage >= 128 && b46_6 || rec->normalized_coverage < 128 && b46_9;
-                      if (t3 > 130 && ((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b46_10 || rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b46_10)))
+                      const gboolean b46_8 = ((t0 >= 406 || rec->secondary_geometry_count >= 19) && b46_6) || (t0 < 406 && rec->secondary_geometry_count < 19 && b46_7);
+                      const gboolean b46_9 = ((t0 >= 420 || rec->secondary_geometry_count >= 13) && b46_8) || (t0 < 420 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 25 || b46_8));
+                      const gboolean b46_10 = (rec->normalized_coverage >= 128 && b46_6) || (rec->normalized_coverage < 128 && b46_9);
+                      if (t3 > 130 && (((rec->normalized_coverage >= 135 || t0 >= 400 || rec->secondary_geometry_count >= 13) && b46_10) || (rec->normalized_coverage < 135 && t0 < 400 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 15 || b46_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b47_0 = rec->normalized_coverage < 60 && t0 < 430 && rec->secondary_geometry_count < 12 && rec->geometry_percent < 40;
                       const gboolean b47_1 = rec->geometry_percent < 15 || b47_0;
-                      const gboolean b47_2 = (rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b47_0 || rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b47_1;
+                      const gboolean b47_2 = ((rec->normalized_coverage >= 90 || t0 >= 425 || rec->secondary_geometry_count >= 7) && b47_0) || (rec->normalized_coverage < 90 && t0 < 425 && rec->secondary_geometry_count < 7 && b47_1);
                       const gboolean b47_3 = rec->secondary_geometry_count < 12 || b47_2;
-                      const gboolean b47_4 = (rec->normalized_coverage >= 75 || t0 >= 425) && b47_2 || rec->normalized_coverage < 75 && t0 < 425 && b47_3;
+                      const gboolean b47_4 = ((rec->normalized_coverage >= 75 || t0 >= 425) && b47_2) || (rec->normalized_coverage < 75 && t0 < 425 && b47_3);
                       const gboolean b47_5 = rec->secondary_geometry_count < 16 || b47_4;
-                      const gboolean b47_6 = (rec->normalized_coverage >= 90 || t0 >= 405) && b47_4 || rec->normalized_coverage < 90 && t0 < 405 && b47_5;
+                      const gboolean b47_6 = ((rec->normalized_coverage >= 90 || t0 >= 405) && b47_4) || (rec->normalized_coverage < 90 && t0 < 405 && b47_5);
                       const gboolean b47_7 = rec->secondary_geometry_count < 21 || b47_6;
-                      const gboolean b47_8 = (rec->normalized_coverage >= 110 || t0 >= 390) && b47_6 || rec->normalized_coverage < 110 && t0 < 390 && b47_7;
+                      const gboolean b47_8 = ((rec->normalized_coverage >= 110 || t0 >= 390) && b47_6) || (rec->normalized_coverage < 110 && t0 < 390 && b47_7);
                       const gboolean b47_9 = rec->secondary_geometry_count < 14 || b47_8;
-                      const gboolean b47_10 = (rec->normalized_coverage >= 130 || t0 >= 415) && b47_8 || rec->normalized_coverage < 130 && t0 < 415 && b47_9;
-                      if (t3 > 145 && ((rec->normalized_coverage >= 150 || t0 >= 395) && b47_10 || rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b47_10)))
+                      const gboolean b47_10 = ((rec->normalized_coverage >= 130 || t0 >= 415) && b47_8) || (rec->normalized_coverage < 130 && t0 < 415 && b47_9);
+                      if (t3 > 145 && (((rec->normalized_coverage >= 150 || t0 >= 395) && b47_10) || (rec->normalized_coverage < 150 && t0 < 395 && (rec->secondary_geometry_count < 18 || b47_10))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
                       const gboolean b48_0 = rec->normalized_coverage < 60 && t0 < 440 && rec->secondary_geometry_count < 12;
                       const gboolean b48_1 = rec->secondary_geometry_count < 15 || b48_0;
-                      const gboolean b48_2 = (rec->normalized_coverage >= 90 || t0 >= 430) && b48_0 || rec->normalized_coverage < 90 && t0 < 430 && b48_1;
+                      const gboolean b48_2 = ((rec->normalized_coverage >= 90 || t0 >= 430) && b48_0) || (rec->normalized_coverage < 90 && t0 < 430 && b48_1);
                       const gboolean b48_3 = rec->secondary_geometry_count < 20 || b48_2;
-                      const gboolean b48_4 = (rec->normalized_coverage >= 95 || t0 >= 405) && b48_2 || rec->normalized_coverage < 95 && t0 < 405 && b48_3;
+                      const gboolean b48_4 = ((rec->normalized_coverage >= 95 || t0 >= 405) && b48_2) || (rec->normalized_coverage < 95 && t0 < 405 && b48_3);
                       const gboolean b48_5 = rec->secondary_geometry_count < 22 || b48_4;
-                      const gboolean b48_6 = (rec->normalized_coverage >= 100 || t0 >= 400) && b48_4 || rec->normalized_coverage < 100 && t0 < 400 && b48_5;
+                      const gboolean b48_6 = ((rec->normalized_coverage >= 100 || t0 >= 400) && b48_4) || (rec->normalized_coverage < 100 && t0 < 400 && b48_5);
                       const gboolean b48_7 = rec->secondary_geometry_count < 7 || b48_6;
-                      const gboolean b48_8 = t0 >= 435 && b48_6 || t0 < 435 && b48_7;
+                      const gboolean b48_8 = (t0 >= 435 && b48_6) || (t0 < 435 && b48_7);
                       const gboolean b48_9 = rec->secondary_geometry_count < 10 || b48_8;
-                      const gboolean b48_10 = t0 >= 430 && b48_8 || t0 < 430 && b48_9;
-                      const gboolean b48_11 = t0 >= 420 && b48_10 || t0 < 420 && (rec->secondary_geometry_count < 15 || b48_10);
-                      const gboolean b48_12 = rec->normalized_coverage >= 120 && b48_6 || rec->normalized_coverage < 120 && b48_11;
+                      const gboolean b48_10 = (t0 >= 430 && b48_8) || (t0 < 430 && b48_9);
+                      const gboolean b48_11 = (t0 >= 420 && b48_10) || (t0 < 420 && (rec->secondary_geometry_count < 15 || b48_10));
+                      const gboolean b48_12 = (rec->normalized_coverage >= 120 && b48_6) || (rec->normalized_coverage < 120 && b48_11);
                       const gboolean b48_13 = rec->secondary_geometry_count < 12 || b48_12;
-                      const gboolean b48_14 = (rec->normalized_coverage >= 140 || t0 >= 430) && b48_12 || rec->normalized_coverage < 140 && t0 < 430 && b48_13;
-                      if (t3 >= 159 && (t0 >= 380 && b48_14 || t0 < 380 && (rec->secondary_geometry_count < 20 || b48_14)))
+                      const gboolean b48_14 = ((rec->normalized_coverage >= 140 || t0 >= 430) && b48_12) || (rec->normalized_coverage < 140 && t0 < 430 && b48_13);
+                      if (t3 >= 159 && ((t0 >= 380 && b48_14) || (t0 < 380 && (rec->secondary_geometry_count < 20 || b48_14))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      if (t3 > 150 && ((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50 || rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))
+                      if (t3 > 150 && (((rec->normalized_coverage >= 128 || t0 >= 390 || rec->secondary_geometry_count >= 22) && rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50) || (rec->normalized_coverage < 128 && t0 < 390 && rec->secondary_geometry_count < 22 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 60 && t0 < 435 && rec->secondary_geometry_count < 11 && rec->geometry_percent < 50)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 160 && ((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40 || rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))
+                      else if (t3 > 160 && (((rec->normalized_coverage >= 128 || t0 >= 400 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40) || (rec->normalized_coverage < 128 && t0 < 400 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 21 && rec->geometry_percent < 40)))))
                         {
                           *status = 0;
                           *conf = 0;
                         }
-                      else if (t3 > 170 && ((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30 || rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))
+                      else if (t3 > 170 && (((rec->normalized_coverage >= 140 || t0 >= 410 || rec->secondary_geometry_count >= 20) && rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30) || (rec->normalized_coverage < 140 && t0 < 410 && rec->secondary_geometry_count < 20 && (rec->geometry_percent < 40 || (rec->normalized_coverage < 80 && t0 < 415 && rec->secondary_geometry_count < 17 && rec->geometry_percent < 30)))))
                         {
                           *status = 0;
                           *conf = 0;
@@ -4389,19 +4394,19 @@ match_reeval_status_tree_type24 (const GoodixChicagoMatchScoreRecord *rec, gint3
                       else
                         {
                           const gboolean b49_0 = rec->normalized_coverage < 90 && t0 < 416 && rec->secondary_geometry_count < 20 && rec->geometry_percent < 45;
-                          const gboolean b49_1 = (rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b49_0 || rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b49_0);
+                          const gboolean b49_1 = ((rec->normalized_coverage >= 115 || t0 >= 445 || rec->secondary_geometry_count >= 10) && b49_0) || (rec->normalized_coverage < 115 && t0 < 445 && rec->secondary_geometry_count < 10 && (rec->geometry_percent < 35 || b49_0));
                           const gboolean b49_2 = t3 > 190 && b49_1;
                           const gboolean b49_3 = rec->geometry_percent < 40 || b49_2;
-                          const gboolean b49_4 = (rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b49_2 || rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b49_3;
+                          const gboolean b49_4 = ((rec->normalized_coverage >= 55 || t0 >= 456 || rec->secondary_geometry_count >= 9) && b49_2) || (rec->normalized_coverage < 55 && t0 < 456 && rec->secondary_geometry_count < 9 && b49_3);
                           const gboolean b49_5 = rec->geometry_percent < 30 || b49_4;
-                          const gboolean b49_6 = (rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b49_4 || rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b49_5;
+                          const gboolean b49_6 = ((rec->normalized_coverage >= 70 || t0 >= 450 || rec->secondary_geometry_count >= 10) && b49_4) || (rec->normalized_coverage < 70 && t0 < 450 && rec->secondary_geometry_count < 10 && b49_5);
                           const gboolean b49_7 = rec->geometry_percent < 30 || b49_6;
-                          const gboolean b49_8 = (rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b49_6 || rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b49_7;
-                          const gboolean b49_9 = (rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b49_8 || rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b49_8);
-                          const gboolean b49_10 = t3 <= 185 && b49_2 || t3 > 185 && b49_9;
+                          const gboolean b49_8 = ((rec->normalized_coverage >= 100 || t0 >= 440 || rec->secondary_geometry_count >= 16) && b49_6) || (rec->normalized_coverage < 100 && t0 < 440 && rec->secondary_geometry_count < 16 && b49_7);
+                          const gboolean b49_9 = ((rec->normalized_coverage >= 115 || t0 >= 435 || rec->secondary_geometry_count >= 13) && b49_8) || (rec->normalized_coverage < 115 && t0 < 435 && rec->secondary_geometry_count < 13 && (rec->geometry_percent < 35 || b49_8));
+                          const gboolean b49_10 = (t3 <= 185 && b49_2) || (t3 > 185 && b49_9);
                           const gboolean b49_11 = rec->geometry_percent < 50 || b49_10;
-                          const gboolean b49_12 = (rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b49_10 || rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b49_11;
-                          if (t3 <= 180 && b49_10 || t3 > 180 && ((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b49_12 || rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b49_12)))
+                          const gboolean b49_12 = ((rec->normalized_coverage >= 85 || t0 >= 415 || rec->secondary_geometry_count >= 19) && b49_10) || (rec->normalized_coverage < 85 && t0 < 415 && rec->secondary_geometry_count < 19 && b49_11);
+                          if ((t3 <= 180 && b49_10) || (t3 > 180 && (((rec->normalized_coverage >= 128 || t0 >= 425 || rec->secondary_geometry_count >= 18) && b49_12) || (rec->normalized_coverage < 128 && t0 < 425 && rec->secondary_geometry_count < 18 && (rec->geometry_percent < 35 || b49_12)))))
                             {
                               *status = 0;
                               *conf = 0;
@@ -4560,7 +4565,7 @@ match_fallback_type24 (const GoodixChicagoEnrollment      *gallery_template,
                        gint32                              selector_threshold)
 {
   gboolean evaluated = FALSE;
-  gint32 admitted = 0, inlier_sum = 0, max_agreement = 0;
+  gint32 inlier_sum = 0, max_agreement = 0;
   gint32 best_agreement = 0, best_inliers = 0, best_coverage = 0;
 
   for (guint index = 0; index < gallery_count; index++)
@@ -4606,7 +4611,6 @@ match_fallback_type24 (const GoodixChicagoEnrollment      *gallery_template,
           best_inliers = inliers;
           best_coverage = coverage;
         }
-      admitted++;
       inlier_sum += inliers;
       max_agreement = MAX (max_agreement, agreement);
     }
@@ -4799,7 +4803,6 @@ goodix_chicago_match_template_type24 (
   gint32                              selector_threshold,
   GoodixChicagoMatchTemplateResult   *result)
 {
-  GoodixChicagoMatchAggregation aggregation = { 0, };
   GoodixChicagoMatchScoreRecord records[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
   GoodixChicagoMatchGeometry geometries[GOODIX_CHICAGO_ENROLLMENT_CAPACITY];
   gint32 auxiliary_counts[GOODIX_CHICAGO_ENROLLMENT_CAPACITY] = { 0, };
@@ -4809,7 +4812,6 @@ goodix_chicago_match_template_type24 (
   g_autofree gint16 *refine_maps = NULL;   /* SFIXES: S+0x20/+0x28 of 0x180052d20 */
   GoodixChicagoMatchSchedulerAuxiliary scheduler_auxiliary;
   GoodixChicagoMatchScoreRecord best_record;
-  gboolean study_eligible_any = FALSE;
   gboolean continue_after_match;
   gboolean any_status = FALSE;   /* ctx+0x684 */
   gboolean any_strong = FALSE;   /* ctx+0x688 */
@@ -4960,7 +4962,6 @@ goodix_chicago_match_template_type24 (
       };
       goodix_chicago_match_filter_study_admission_type24 (
         &records[index], &study_input, &status_flag, &study_eligible);
-      study_eligible_any |= study_eligible != 0;
       if (status_flag == 1)
         {
           /* 0x180029cfc: status-1 geometry for templateStudy. */

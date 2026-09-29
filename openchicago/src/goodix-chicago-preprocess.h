@@ -88,6 +88,15 @@ void goodix_chicago_preprocessor_prepare_raw (GoodixChicagoPreprocessor *self,
 
 const guint16 *goodix_chicago_preprocessor_get_image_base (const GoodixChicagoPreprocessor *self);
 
+/* preprocessor_init(ImageBase) on a running preprocessor (openchicago): the
+ * new ImageBase and the matching rebased @calibration replace the old ones;
+ * the adaptive state (kr, framenum, history, ...) is kept, as in the DLL,
+ * whose preprocessor_init resets none of those globals. */
+gboolean goodix_chicago_preprocessor_rebase (GoodixChicagoPreprocessor *self,
+                                             GBytes                    *calibration,
+                                             const guint16              image_base[GOODIX_CHICAGO_PIXELS],
+                                             GError                   **error);
+
 /* Exact mode-0x18 mask built before +0x43a00. The returned threshold is
  * derived from positive ImageBase-current samples above 120. A mask byte is
  * 0xff when that difference reaches the threshold and current is not the

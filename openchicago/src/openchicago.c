@@ -376,6 +376,30 @@ oc_session_new_from_state (GBytes  *state,
   return g_steal_pointer (&self);
 }
 
+const guint16 *
+oc_session_get_image_base (OcSession *self)
+{
+  g_return_val_if_fail (self != NULL, NULL);
+  return goodix_chicago_preprocessor_get_image_base (self->preprocessor);
+}
+
+gboolean
+oc_session_rebase (OcSession     *self,
+                   const guint16  image_base[OC_FRAME_PIXELS],
+                   GError       **error)
+{
+  g_autoptr(GBytes) calibration = NULL;
+
+  g_return_val_if_fail (self != NULL && image_base != NULL, FALSE);
+  calibration = goodix_chicago_calibration_rebase (
+    goodix_chicago_preprocessor_get_calibration (self->preprocessor),
+    image_base, error);
+  if (!calibration)
+    return FALSE;
+  return goodix_chicago_preprocessor_rebase (self->preprocessor, calibration,
+                                             image_base, error);
+}
+
 gboolean
 _oc_session_state_equal (OcSession *a, OcSession *b)
 {
@@ -723,15 +747,33 @@ oc_verify (OcSession      *self,
            GBytes        **updated_blob,
            GError        **error)
 {
+  gint index;
+
+  g_return_val_if_fail (template_blob != NULL, FALSE);
+  return oc_identify (self, &template_blob, 1, frame, result, &index,
+                      updated_blob, error);
+}
+
+gboolean
+oc_identify (OcSession      *self,
+             GBytes *const  *templates,
+             guint           n_templates,
+             const guint16   frame[OC_FRAME_PIXELS],
+             OcVerifyResult *result,
+             gint           *matched_index,
+             GBytes        **updated_blob,
+             GError        **error)
+{
   g_autofree GoodixChicagoRuntimeFrame *f = NULL;
   g_autoptr(GoodixChicagoRuntimeProbe) probe = NULL;
   GoodixChicagoRuntimeReject rr;
-  GoodixChicagoMatchTemplateResult res;
+  GoodixChicagoMatchTemplateResult res, best;
 
-  g_return_val_if_fail (self != NULL && template_blob != NULL, FALSE);
-  g_return_val_if_fail (frame != NULL && result != NULL, FALSE);
+  g_return_val_if_fail (self != NULL && (templates != NULL || n_templates == 0), FALSE);
+  g_return_val_if_fail (frame != NULL && result != NULL && matched_index != NULL, FALSE);
   memset (result, 0, sizeof (*result));
   result->subtemplate = -1;
+  *matched_index = -1;
   if (updated_blob)
     *updated_blob = NULL;
 
@@ -751,15 +793,26 @@ oc_verify (OcSession      *self,
       return TRUE;
     }
 
-  memset (&res, 0, sizeof (res));
-  if (!goodix_chicago_runtime_match (probe, template_blob, &res, error))
-    return FALSE;
-  result->score = res.score;
-  result->subtemplate = res.selected_index;
-  result->match = res.score > 0;
+  memset (&best, 0, sizeof (best));
+  for (guint i = 0; i < n_templates; i++)
+    {
+      g_return_val_if_fail (templates[i] != NULL, FALSE);
+      memset (&res, 0, sizeof (res));
+      if (!goodix_chicago_runtime_match (probe, templates[i], &res, error))
+        return FALSE;
+      if (i == 0 || (res.score > 0 && res.score > best.score))
+        {
+          best = res;
+          if (res.score > 0)
+            *matched_index = (gint) i;
+        }
+    }
+  result->score = best.score;
+  result->subtemplate = n_templates ? best.selected_index : -1;
+  result->match = *matched_index >= 0;
   /* EngineAdapter 0x180042d50: score > 0 -> templateStudy */
   if (result->match && updated_blob)
-    return goodix_chicago_runtime_study (probe, template_blob, &res,
+    return goodix_chicago_runtime_study (probe, templates[*matched_index], &best,
                                          updated_blob, error);
   return TRUE;
 }

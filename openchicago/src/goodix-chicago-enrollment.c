@@ -301,8 +301,10 @@ transform_scale_is_valid (const gint32 transform[6])
   const gint64 m10 = a * c + b * d;
   const gint64 m11 = c * c + d * d;
   const gint64 trace = m00 + m11;
-  const gint64 discriminant = trace * trace +
-                              4 * (m10 * m01 - m11 * m00);
+  /* 64-bit wraparound as in the DLL (unsigned: defined in C) */
+  const gint64 discriminant = (gint64) ((guint64) trace * (guint64) trace +
+                                        4u * ((guint64) m10 * (guint64) m01 -
+                                              (guint64) m11 * (guint64) m00));
   const gint64 upper_delta = ((gint64) 0xa3 << 9) - trace;
   const gint64 lower_delta = ((gint64) 0x191 << 9) - trace;
 
@@ -471,12 +473,12 @@ warp_config1_plane (const guint8 *source,
 
   if (determinant == 0)
     return FALSE;
-  inverse_a = (gint32) (((gint64) transform[4] << 18) / determinant);
+  inverse_a = (gint32) (((gint64) transform[4] * 0x40000) / determinant);
   inverse_c = (gint32) (((gint64) transform[3] * -0x40000) /
                         determinant);
   inverse_b = (gint32) (((gint64) transform[1] * -0x40000) /
                         determinant);
-  inverse_d = (gint32) (((gint64) transform[0] << 18) / determinant);
+  inverse_d = (gint32) (((gint64) transform[0] * 0x40000) / determinant);
   inverse_x = (gint32) ((((gint64) transform[5] * transform[1] -
                           (gint64) transform[4] * transform[2]) * 0x400) /
                         determinant);
@@ -1257,15 +1259,15 @@ invert_group_transform (const gint32 input[6],
       memcpy (output, input, 6 * sizeof (*output));
       return;
     }
-  output[0] = (gint32) (((gint64) input[4] << 16) / determinant);
-  output[1] = (gint32) (((gint64) - input[1] << 16) / determinant);
+  output[0] = (gint32) (((gint64) input[4] * 0x10000) / determinant);
+  output[1] = (gint32) (((gint64) - input[1] * 0x10000) / determinant);
   output[2] = (gint32) (((((gint64) input[5] * input[1]) -
-                          ((gint64) input[4] * input[2])) << 8) /
+                          ((gint64) input[4] * input[2])) * 0x100) /
                         determinant);
-  output[3] = (gint32) (((gint64) - input[3] << 16) / determinant);
-  output[4] = (gint32) (((gint64) input[0] << 16) / determinant);
+  output[3] = (gint32) (((gint64) - input[3] * 0x10000) / determinant);
+  output[4] = (gint32) (((gint64) input[0] * 0x10000) / determinant);
   output[5] = (gint32) (((((gint64) input[3] * input[2]) -
-                          ((gint64) input[5] * input[0])) << 8) /
+                          ((gint64) input[5] * input[0])) * 0x100) /
                         determinant);
 }
 
@@ -3543,7 +3545,6 @@ goodix_chicago_enrollment_pack (const GoodixChicagoEnrollment *self,
   g_autoptr(GByteArray) packed = NULL;
   g_autofree guint8 *relation_mask = NULL;
   gsize expected_size;
-  guint grouped = 0;
   guint32 crc;
 
   g_return_val_if_fail (self != NULL, NULL);
@@ -3560,7 +3561,6 @@ goodix_chicago_enrollment_pack (const GoodixChicagoEnrollment *self,
                                "gdix51c0: cannot pack a subtemplate without metric data");
           return NULL;
         }
-      grouped += subtemplate->group_state == 1;
     }
 
   g_byte_array_append (packed, (const guint8[]){ 0x87, 0, 0, 0, 0, 0x86 }, 6);

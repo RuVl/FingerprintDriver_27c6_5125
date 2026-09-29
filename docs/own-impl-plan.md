@@ -116,3 +116,8 @@
 - 2026-09-29: библиотека openchicago проверена мной: чистая meson-сборка, `meson test` — 4 OK + 1 ожидаемый отказ
   (порча состояния), 0 Fail; e2e через API = DLL (N=12, WARM, save/restore). libopenchicago.a не имеет внешних
   символов кроме libc/GLib, упоминания DLL в src — только комментарии с адресами.
+- 2026-09-29: стадия 8 (offline) проверена мной: ветка `openchicago` в upstream/libfprint-mr648 (3e58f90, e44b7c9),
+  чистая сборка — 0 предупреждений, `meson test` 7 OK / 0 Fail / 33 Skip (goodix5125-algo на кадрах датасета OK);
+  копия chicago/ = openchicago/src побайтно; запись PSK только при GOODIX5125_PROVISION_PSK=random.
+  openchicago после правок UB/предупреждений: 0 предупреждений, meson test 4 OK + 1 ожидаемый отказ.
+  Дальше — тест на железе с пользователем (docs/stage8-driver.md §8).

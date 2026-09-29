@@ -8,7 +8,11 @@
  *   3. error paths: enrol without begin, corrupt template in oc_verify;
  *   4. OC_ENROLL_ENGINE on the natural touches in dataset order (EngineAdapter
  *      protocol, notes/81): completes, template matches own probes, no impostor;
- *   5. oc_enroll_add_pair (choose_enroll_img) keeps the frame the rule selects.
+ *   5. oc_enroll_add_pair (choose_enroll_img) keeps the frame the rule selects;
+ *   6. oc_identify over {impostor template, own template} = the best of two
+ *      oc_verify calls, and the frame is preprocessed once (sessions stay equal);
+ *   7. oc_session_rebase = preprocessor_init with the new ImageBase (fresh
+ *      sessions equal), keeps the adaptive state, survives save/restore.
  *   test_api <data_dir>
  */
 #include <stdio.h>
@@ -19,6 +23,7 @@
 
 #include "goodix-chicago-calibration.h"
 #include "openchicago.h"
+#include "openchicago-private.h"
 
 #define PX OC_FRAME_PIXELS
 #define MAXREC 256
@@ -221,6 +226,86 @@ main (int argc, char **argv)
     CHECK (hit[2] == 0, "impostor matched");
     CHECK (hit[0] + hit[1] > 0, "no genuine match");
   }
+  /* 6. identify = best of verify; one preprocessing per frame */
+  {
+    g_autoptr(GBytes) state = oc_session_save_state (s);
+    g_autoptr(OcSession) sa = oc_session_new_from_state (state, &error);
+    g_autoptr(OcSession) sb = oc_session_new_from_state (state, &error);
+    g_autoptr(OcSession) sc = oc_session_new_from_state (state, &error);
+    g_autoptr(GBytes) imp = NULL;
+    int n = 0, own = 0, other = 0;
+
+    /* impostor template, built in a throw-away copy of the session */
+    {
+      g_autoptr(OcSession) st = oc_session_new_from_state (state, &error);
+      OcEnrollResult er = { 0 };
+
+      CHECK (oc_enroll_begin (st, OC_ENROLL_PLAIN, 8, &error), "impostor begin");
+      for (int i = 0; i < nrec && !er.complete; i++)
+        if (!strcmp (labels[i], "impostor"))
+          CHECK (oc_enroll_add (st, raw + (gsize) i * PX, &er, &error), "impostor add");
+      imp = oc_enroll_finish (st, &error);
+      CHECK (imp != NULL, "impostor template");
+    }
+    for (int i = 0; imp && i < nrec; i += 3)
+      {
+        OcVerifyResult va, vb, vc;
+        GBytes *gallery[2] = { imp, blob };
+        gint idx, want = -1;
+        gint32 want_score;
+
+        CHECK (oc_verify (sa, blob, raw + (gsize) i * PX, &va, NULL, &error), "verify own");
+        CHECK (oc_verify (sc, imp, raw + (gsize) i * PX, &vc, NULL, &error), "verify impostor");
+        CHECK (oc_identify (sb, gallery, 2, raw + (gsize) i * PX, &vb, &idx, NULL, &error),
+               "identify");
+        if (va.reject != OC_REJECT_NONE)
+          {
+            CHECK (vb.reject == va.reject && idx == -1, "identify reject rec %d", i);
+            continue;
+          }
+        want_score = vc.score;
+        if (vc.score > 0)
+          want = 0;
+        if (va.score > 0 && va.score > vc.score)
+          want = 1, want_score = va.score;
+        CHECK (idx == want && vb.match == (want >= 0) &&
+               (want < 0 || vb.score == want_score),
+               "identify rec %d: idx %d score %d, want %d (%d / %d)", i, idx, vb.score,
+               want, vc.score, va.score);
+        n++;
+        own += idx == 1;
+        other += idx == 0;
+      }
+    CHECK (_oc_session_state_equal (sa, sb) && _oc_session_state_equal (sa, sc),
+           "identify changed the session state differently from verify");
+    printf ("identify: %d frames, own template %d, impostor template %d\n", n, own, other);
+  }
+
+  /* 7. rebase */
+  {
+    const guint16 *base2 = bg + (gsize) nat[nnat - 1] * PX;
+    g_autoptr(OcSession) f1 = oc_session_new (base2, &error);
+    g_autoptr(OcSession) f2 = oc_session_new (base, &error);
+    g_autoptr(GBytes) state = oc_session_save_state (s);
+    g_autoptr(OcSession) r1 = oc_session_new_from_state (state, &error);
+    g_autoptr(OcSession) r2 = oc_session_new_from_state (state, &error);
+    g_autoptr(OcSession) r3 = NULL;
+    g_autoptr(GBytes) state3 = NULL;
+
+    CHECK (memcmp (base, base2, PX * 2) != 0, "dataset has one ImageBase only");
+    CHECK (oc_session_rebase (f2, base2, &error), "rebase fresh");
+    CHECK (_oc_session_state_equal (f1, f2), "rebased fresh session != new session");
+    CHECK (oc_session_rebase (r2, oc_session_get_image_base (r1), &error) &&
+           _oc_session_state_equal (r1, r2), "rebase onto the same ImageBase changed the state");
+    CHECK (oc_session_rebase (r2, base2, &error), "rebase");
+    CHECK (!_oc_session_state_equal (r1, r2), "rebase did not change the ImageBase");
+    state3 = oc_session_save_state (r2);
+    r3 = oc_session_new_from_state (state3, &error);
+    CHECK (r3 && _oc_session_state_equal (r2, r3), "rebased state round trip");
+    CHECK (oc_session_rebase (r2, oc_session_get_image_base (r1), &error) &&
+           _oc_session_state_equal (r1, r2), "rebase back != original");
+  }
+
   printf ("%s\n", failures ? "FAIL" : "OK");
   return failures ? 1 : 0;
 }

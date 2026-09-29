@@ -675,6 +675,32 @@ goodix_chicago_preprocessor_state_equal (const GoodixChicagoPreprocessor *a,
                  sizeof (GoodixChicagoPreprocessor) - start) == 0;
 }
 
+gboolean
+goodix_chicago_preprocessor_rebase (GoodixChicagoPreprocessor *self,
+                                    GBytes                    *calibration,
+                                    const guint16              image_base[GOODIX_CHICAGO_PIXELS],
+                                    GError                   **error)
+{
+  g_return_val_if_fail (self != NULL, FALSE);
+  g_return_val_if_fail (calibration != NULL && image_base != NULL, FALSE);
+
+  if (!goodix_chicago_calibration_validate_payload (calibration, error))
+    return FALSE;
+  g_bytes_ref (calibration);
+  g_clear_pointer (&self->calibration, g_bytes_unref);
+  self->calibration = calibration;
+  memcpy (self->image_base, image_base, sizeof (self->image_base));
+  for (guint pixel = 0; pixel < GOODIX_CHICAGO_PIXELS; pixel++)
+    {
+      gboolean ok;
+
+      ok = goodix_chicago_calibration_get_corrections (calibration, pixel, NULL,
+                                                       &self->offset[pixel], NULL);
+      g_assert (ok);
+    }
+  return TRUE;
+}
+
 GBytes *
 goodix_chicago_preprocessor_get_calibration (const GoodixChicagoPreprocessor *self)
 {
@@ -2475,7 +2501,7 @@ goodix_chicago_preprocessor_calculate_resolution_secondary_analysis (
             valid++;
           }
       }
-  range = maximum - minimum;
+  range = valid ? maximum - minimum : 0;
   if (valid == 0 || range < 1)
     return;
   for (guint pixel = 0; pixel < GOODIX_CHICAGO_PIXELS; pixel++)
@@ -3129,15 +3155,15 @@ contrast_map_q16 (const guint8 enhanced[GOODIX_CHICAGO_PIXELS],
 
       for (guint x = 1; x + 1 < CHICAGO_STAGE_WIDTH; x++)
         {
-          gint value;
+          gint gradient;
 
-          value = ((smoothed[previous_y * CHICAGO_STAGE_WIDTH + x + 1] >> 8) -
+          gradient = ((smoothed[previous_y * CHICAGO_STAGE_WIDTH + x + 1] >> 8) -
                    (smoothed[previous_y * CHICAGO_STAGE_WIDTH + x - 1] >> 8)) +
                   2 * ((smoothed[y * CHICAGO_STAGE_WIDTH + x + 1] >> 8) -
                        (smoothed[y * CHICAGO_STAGE_WIDTH + x - 1] >> 8)) +
                   ((smoothed[next_y * CHICAGO_STAGE_WIDTH + x + 1] >> 8) -
                    (smoothed[next_y * CHICAGO_STAGE_WIDTH + x - 1] >> 8));
-          gradient_x[y * CHICAGO_STAGE_WIDTH + x] = value;
+          gradient_x[y * CHICAGO_STAGE_WIDTH + x] = gradient;
         }
     }
 
@@ -3149,15 +3175,15 @@ contrast_map_q16 (const guint8 enhanced[GOODIX_CHICAGO_PIXELS],
                                                 CHICAGO_STAGE_WIDTH);
           const guint next_x = reflect_101 ((gint) x + 1,
                                             CHICAGO_STAGE_WIDTH);
-          gint value;
+          gint gradient;
 
-          value = ((smoothed[(y + 1) * CHICAGO_STAGE_WIDTH + previous_x] >> 8) -
+          gradient = ((smoothed[(y + 1) * CHICAGO_STAGE_WIDTH + previous_x] >> 8) -
                    (smoothed[(y - 1) * CHICAGO_STAGE_WIDTH + previous_x] >> 8)) +
                   2 * ((smoothed[(y + 1) * CHICAGO_STAGE_WIDTH + x] >> 8) -
                        (smoothed[(y - 1) * CHICAGO_STAGE_WIDTH + x] >> 8)) +
                   ((smoothed[(y + 1) * CHICAGO_STAGE_WIDTH + next_x] >> 8) -
                    (smoothed[(y - 1) * CHICAGO_STAGE_WIDTH + next_x] >> 8));
-          gradient_y[y * CHICAGO_STAGE_WIDTH + x] = value;
+          gradient_y[y * CHICAGO_STAGE_WIDTH + x] = gradient;
         }
     }
 

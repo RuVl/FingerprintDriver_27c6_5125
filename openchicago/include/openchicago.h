@@ -84,6 +84,19 @@ GBytes *oc_session_save_state (OcSession *self);
 OcSession *oc_session_new_from_state (GBytes  *state,
                                       GError **error);
 
+/* preprocessor_init(ImageBase) on a running session: a fresh no-finger
+ * frame replaces the ImageBase (and the offset plane of the calibration);
+ * every adaptive variable is kept.  The DLL does the same when its host
+ * reports NeedUpdateImageBase (notes/80 §3): preprocessor_init resets none of
+ * the process-lifetime globals.  Use it after oc_session_new_from_state()
+ * when the sensor was re-initialised (new power cycle, other temperature). */
+/* The ImageBase the session currently subtracts (64 x 80). */
+const guint16 *oc_session_get_image_base (OcSession *self);
+
+gboolean oc_session_rebase (OcSession     *self,
+                            const guint16  image_base[OC_FRAME_PIXELS],
+                            GError       **error);
+
 /* ---- per-frame primitives ---------------------------------------------- */
 
 typedef struct
@@ -186,6 +199,20 @@ gboolean oc_verify (OcSession      *self,
                     OcVerifyResult *result,
                     GBytes        **updated_blob,
                     GError        **error);
+
+/* identifyImage of one @frame against @n_templates templates (the frame is
+ * preprocessed once, as by oc_verify()).  The match is the template with the
+ * highest score > 0 (first one on a tie); *@matched_index receives its index
+ * or -1.  @result describes the frame and the best match.  @updated_blob as
+ * in oc_verify(), for the matched template only. */
+gboolean oc_identify (OcSession      *self,
+                      GBytes *const  *templates,
+                      guint           n_templates,
+                      const guint16   frame[OC_FRAME_PIXELS],
+                      OcVerifyResult *result,
+                      gint           *matched_index,
+                      GBytes        **updated_blob,
+                      GError        **error);
 
 /* ---- storage helpers for drivers --------------------------------------- */
 
