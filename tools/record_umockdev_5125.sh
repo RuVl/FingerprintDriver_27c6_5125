@@ -107,10 +107,12 @@ step_record() {
      usbmon, остановка fprintd, create-driver-test.py.
   2. "identifying against an empty gallery" — ничего не делать (без касания).
   3. "enrolling, touch the sensor 12 times" — прикладывайте выбранный палец
-     и каждый раз убирайте, чуть меняя положение, пока не будет
-     "enroll done" (12 засчитанных касаний; строки "enroll progress" с
-     ошибкой — повтор, они не засчитываются).
-  4. "verifying" — касание тем же пальцем, центром подушечки, как при регистрации;
+     ОДНИМ И ТЕМ ЖЕ местом (центр подушечки), плотно, на полсекунды, и
+     убирайте, пока не будет "enroll done". Подсказки "This area is enrolled
+     already; move…" игнорировать: после двух таких касание засчитывается.
+     Разброс по пальцу не нужен — тесту важно, чтобы проверка попала в
+     зарегистрированное место.
+  4. "verifying" — то же место тем же пальцем;
      при "verify done: no match" будет ещё попытка (всего до 5).
   5. В конце должно быть "Saving USB capture as test case goodix5125" и
      "Done!". Если verify не совпал (AssertionError) — запустить record ещё раз.
@@ -132,11 +134,17 @@ EOF
   # create-driver-test.py relaunches itself unless LD_LIBRARY_PATH already
   # contains $BUILD/libfprint/; keep ours so that the local libgusb is found.
   sudo env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" GI_TYPELIB_PATH="$GI_TYPELIB_PATH" \
-    FP_DEVICE_EMULATION=1 G_MESSAGES_DEBUG=all \
+    FP_DEVICE_EMULATION=1 \
+    G_MESSAGES_DEBUG="libfprint-goodix5125 libfprint-device" \
     "$PY" "$BUILD/tests/create-driver-test.py" --test custom goodix5125 \
     2>&1 | tee "$ROOT/dumps/umockdev-record-$(date +%Y%m%d-%H%M%S).log"
 
   sudo chown -R "$(id -u):$(id -g)" "$TEST_DIR"
+  # umockdev-record пишет device в stdout: отладочные строки GLib там лишние
+  # (umockdev-test.py требует "P: " в первой строке)
+  if [[ -f $TEST_DIR/device ]] && ! head -1 "$TEST_DIR/device" | grep -q '^P: '; then
+    sed -i '/^P: /,$!d' "$TEST_DIR/device"
+  fi
   ls -l "$TEST_DIR"
   cat <<EOF
 
