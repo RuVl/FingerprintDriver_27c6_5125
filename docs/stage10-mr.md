@@ -229,7 +229,7 @@ ServerHello/расширения — тогда запись придётся о
   `meson test -C build-umockdev`: `goodix5125` OK за 14 с; в build-mr
   Ok 9 / Fail 0. `device`: только пути PCI/USB и серийный номер прошивки
   `00000000001A`, без DMI и данных хоста.
-- Коммиты ветки: 52c3b93 matcher, 468588e driver, 83af60b tests
+- Коммиты ветки (после правок по ревью и удаления подписей Claude): 24956f5 matcher, 81f8bd1 driver, 9af6c1f tests
   (custom.py, device, custom.pcapng, drivers_tests с timeout 120).
 - Найдено и исправлено по дороге:
   1. **Воспроизведение таймаутов.** umockdev отдаёт чтение, которое в
