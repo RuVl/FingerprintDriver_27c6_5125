@@ -210,7 +210,7 @@ GOODIX5125_TEST_FRAMES=$PWD/../../tools/algo meson test -C build     # 7 OK, 33 
   необязательный ACK в async-пути, точность ENGINE-регистрации на живых касаниях — только после теста.
 - templateStudy через fprintd теряется (раздел 2). Возможное решение в драйвере: хранить выученный blob
   в state-каталоге под ключом SHA-256 исходного `fpi-data` и подставлять при verify; или предложить в
-  libfprint/fprintd API «print updated». Не сделано — решение за вами.
+  libfprint/fprintd API «print updated». Сделано на стадии 9 (хранилище `learned/`, docs/stage9-integration.md §1).
 - backup-путь ENGINE после вливания в группу (docs/stage-lib.md «Остаток») и путь замены при 50
   подшаблонах не сверены с DLL.
 - Upstream-блокеры !648 остаются: одна единица железа, нет umockdev-записи (её можно снять этим

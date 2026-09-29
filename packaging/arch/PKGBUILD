@@ -1,0 +1,82 @@
+# libfprint with the goodix5125 driver (27c6:5125, HONOR MagicBook 16) on the
+# openchicago matcher: branch `openchicago` of the local clone
+# upstream/libfprint-mr648 (upstream libfprint + MR !648 + our changes).
+#
+# Drop-in replacement of extra/libfprint (same drivers=all, same soname), for
+# fprintd from extra.  Build: `makepkg -si` in this directory.  Another clone
+# location: LIBFPRINT_OPENCHICAGO_REPO=/path/to/clone makepkg -si
+
+pkgname=libfprint-goodix5125-git
+_pkgname=libfprint
+pkgver=1.94.100.r4.g7438e79
+pkgrel=1
+pkgdesc="Library for fingerprint readers, with the Goodix 27c6:5125 driver (openchicago)"
+url="https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/648"
+arch=(x86_64)
+license=(LGPL-2.1-or-later)
+# as extra/libfprint 1.94.100-1
+depends=(
+  libgcc
+  glib2
+  glibc
+  libgudev
+  libgusb
+  openssl
+  pixman
+)
+makedepends=(
+  git
+  glib2-devel
+  meson
+  systemd
+)
+optdepends=('fprintd: D-Bus daemon and PAM module for fingerprint login')
+# makepkg turns the bare soname into libfprint-2.so=2-64, which fprintd needs
+provides=("$_pkgname=${pkgver%%.r*}" libfprint-2.so)
+conflicts=("$_pkgname")
+_repo="${LIBFPRINT_OPENCHICAGO_REPO:-$startdir/../../upstream/libfprint-mr648}"
+source=("$_pkgname::git+file://$_repo#branch=openchicago")
+b2sums=('SKIP')
+
+pkgver() {
+  cd $_pkgname
+  # 1.94.100 (meson project version) + commits of this branch since v1.94.100
+  local base count
+  base=$(sed -n "s/^ *version: '\([0-9.]*\)'.*/\1/p" meson.build | head -1)
+  if git rev-parse -q --verify "refs/tags/v$base" >/dev/null; then
+    count=$(git rev-list --count "v$base..HEAD")
+  else
+    count=$(git rev-list --count HEAD)
+  fi
+  printf '%s.r%s.g%s' "$base" "$count" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  local meson_options=(
+    # every driver, as extra/libfprint (goodix5125 is a default driver here)
+    -D drivers=all
+    -D installed-tests=false
+    # neither is used by fprintd; saves gobject-introspection and gtk-doc
+    -D introspection=false
+    -D doc=false
+    -D gtk-examples=false
+    # udev rules (SPI devices) and hwdb (USB autosuspend, incl. 27c6:5125)
+    -D udev_rules=enabled
+    -D udev_hwdb=enabled
+  )
+
+  arch-meson $_pkgname build "${meson_options[@]}"
+  meson compile -C build
+}
+
+check() {
+  # umockdev-based driver tests are skipped when umockdev is missing; the
+  # offline goodix5125-algo test needs recorded frames (GOODIX5125_TEST_FRAMES)
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}
+
+# vim:set sw=2 sts=-1 et:
