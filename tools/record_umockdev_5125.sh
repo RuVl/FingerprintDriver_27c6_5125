@@ -7,6 +7,7 @@
 # (например, левый мизинец), из корня репо:
 #   tools/record_umockdev_5125.sh check    # 1. проверить зависимости
 #   tools/record_umockdev_5125.sh build    # 2. собрать libfprint с introspection
+#   tools/record_umockdev_5125.sh try      #    (необяз.) тот же сценарий без записи
 #   tools/record_umockdev_5125.sh record   # 3. записать (sudo, нужны касания)
 #   tools/record_umockdev_5125.sh replay   # 4. попробовать воспроизвести запись
 # Без аргумента выполняются все шаги по очереди.
@@ -148,6 +149,38 @@ EOF
 EOF
 }
 
+step_try() {
+  banner "Пробный прогон сценария на устройстве, без записи"
+  check_custom_py
+  cat <<EOF
+
+НУЖНО ВАШЕ УЧАСТИЕ
+  Тот же сценарий, что при записи, но USB не записывается и ничего не
+  сохраняется: состояние драйвера во временном каталоге (удаляется при
+  закрытии), в лог попадают только оценки. Можно своим рабочим пальцем.
+  Касания — как при записи (регистрация 12, потом до 5 проверок).
+EOF
+  read -r -p "Продолжить? [y/N] " answer
+  [[ $answer == [yY] ]] || exit 0
+
+  sudo -v
+  if systemctl is-active --quiet fprintd; then
+    echo "+ sudo systemctl stop fprintd"
+    sudo systemctl stop fprintd
+  fi
+  mkdir -p "$ROOT/dumps"
+  local log
+  log="$ROOT/dumps/umockdev-try-$(date +%Y%m%d-%H%M%S).log"
+  sudo env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" GI_TYPELIB_PATH="$GI_TYPELIB_PATH" \
+    FP_DEVICE_EMULATION=1 FP_DRIVERS_ALLOWLIST=goodix5125 G_MESSAGES_DEBUG=all \
+    "$PY" -u "$TEST_DIR/custom.py" > "$log" 2>&1 &
+  local pid=$!
+  # показывать только подсказки сценария и итоги кадров
+  tail -f "$log" --pid=$pid | grep --line-buffered -E \
+    '^(identifying|enrolling|enroll |verif)|enroll frame:|match: score|Error|assert'
+  wait $pid && echo "TRY OK" || echo "TRY FAIL (лог: $log)"
+}
+
 step_replay() {
   banner "4. Воспроизведение записи (без устройства)"
   [[ -f $TEST_DIR/custom.pcapng ]] || die "нет $TEST_DIR/custom.pcapng: сначала $0 record"
@@ -166,7 +199,8 @@ case "${1:-all}" in
   check)  step_check ;;
   build)  step_check; step_build ;;
   record) step_record ;;
+  try)    step_try ;;
   replay) step_replay ;;
   all)    step_check; step_build; step_record; step_replay ;;
-  *)      die "неизвестный шаг: $1 (check|build|record|replay)" ;;
+  *)      die "неизвестный шаг: $1 (check|build|try|record|replay)" ;;
 esac
