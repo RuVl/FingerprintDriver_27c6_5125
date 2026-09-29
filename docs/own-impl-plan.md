@@ -121,3 +121,4 @@
   копия chicago/ = openchicago/src побайтно; запись PSK только при GOODIX5125_PROVISION_PSK=random.
   openchicago после правок UB/предупреждений: 0 предупреждений, meson test 4 OK + 1 ожидаемый отказ.
   Дальше — тест на железе с пользователем (docs/stage8-driver.md §8).
+- 2026-09-29: тест на железе: enroll 12/12 (19 кадров), verify свой 4/4, чужой 0/1 (docs/stage8-driver.md §10).

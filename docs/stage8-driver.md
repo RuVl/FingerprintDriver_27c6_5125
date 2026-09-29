@@ -222,3 +222,10 @@ GOODIX5125_TEST_FRAMES=$PWD/../../tools/algo meson test -C build     # 7 OK, 33 
   и проходит тесты отдельно).
 - `e44b7c9` goodix5125: use openchicago for enrolment and matching (chicago/ → openchicago, драйвер,
   состояние, PSK, FDT, offline-тест, README).
+
+## 10. Тест на железе (2026-09-29, HONOR MagicBook 16, examples от пользователя, PSK-файл из нулей)
+
+- Регистрация: 12/12 стадий за 19 кадров (5 подсказок «сдвинуть палец», 1 class-reject), q 71–100, c 77–100;
+  PSK из файла совпал с хешем сенсора (записи не было), TLS, FDT-ожидание, пара кадров — работают.
+- Проверка: свой палец 4/4 MATCH (score 48, 67, 83, 54; подшаблоны 0/4/10/3), другой палец 1/1 NO MATCH (score 0).
+- Логи: ~/enroll.log, ~/verify.log (не коммитятся).
