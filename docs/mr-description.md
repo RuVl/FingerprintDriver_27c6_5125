@@ -11,8 +11,8 @@ It builds on the 27c6:5125 driver proposed in
 Many thanks to its authors, Thomas97460 and Berke Kabagöz (whose ChicagoHS port
 and white-box pairing code from
 [berkekbgz/libfprint-goodix-spi](https://github.com/berkekbgz/libfprint-goodix-spi)
-were integrated there). Their copyright notices are kept in every derived file,
-and they are credited with `Co-authored-by:` in the commits.
+were integrated there). The copyright notices of !648 are kept in every
+derived file, and both are credited with `Co-authored-by:` in the commits.
 
 ## What is supported
 
@@ -51,9 +51,8 @@ operating system on the same machine.
 **Finger detection (FDT).** After a frame, FDT mode `0x0d` is armed, followed by
 an FDT-down probe (no reply expected within 2 s), an MCU state query and
 FDT-down `0x0c`. The lift is detected by polling FDT mode `0x0d` until the touch
-mask is clear. This sequence is reliable on 27c6:5125 hardware, where FDT-up was
-not. The FDT-up sequence of !648 is still available with
-`GOODIX5125_FDT_SEQUENCE=mr648`.
+mask is clear. This sequence is reliable on 27c6:5125 hardware, where FDT-up
+(used by !648 for the lift) was not.
 
 **Matcher: openchicago.** `libfprint/drivers/goodix5125/chicago/` is a free C
 implementation of the ChicagoHS algorithm (profile 12), based on the port from
@@ -85,13 +84,23 @@ is not writable, or `GOODIX5125_STATE_DIR`:
 Files that belong to another sensor, and corrupt files, are rejected, never
 overwritten.
 
+**Device emulation.** With `FP_DEVICE_EMULATION=1` (umockdev tests and their
+recording) the host side is deterministic, so that a recorded session replays
+byte for byte: the TLS server gets its own OpenSSL library context with a small
+built-in RAND provider that returns a fixed pattern (ServerHello random,
+session ID and AES-GCM nonces are fixed; no session tickets), the all-zero PSK
+is used and never written, the `GOODIX5125_*` environment is ignored, and the
+state lives in a temporary directory that is removed on close.
+
 ## Tests
 
 - `goodix5125`: framing, RX classification (optional ACK, stale messages),
   OTP-based MCU configuration, image decoding, FDT bases, pairing and
   calibration persistence, all on synthetic data;
 - `goodix5125-tls`: the TLS-PSK memory-BIO transport against an in-process
-  OpenSSL client;
+  OpenSSL client, and the deterministic mode: the client side of a handshake
+  replayed against a second server gets the same bytes back, and the recorded
+  application data decrypts;
 - `goodix5125-algo`: replays recorded raw frames through the driver's
   algorithm layer and through the openchicago API in parallel. It covers
   enrolment (plain protocol and engine protocol, frame pairs),
@@ -120,10 +129,13 @@ files, and the sources are formatted with `scripts/uncrustify.cfg`.
   entries unused for 180 days expire and at most 50 are kept (least recently
   used first). A libfprint API for updated prints would make this store
   unnecessary.
-- **No umockdev recording yet.** A `tests/goodix5125/` recording is not
-  included. Replaying one also needs a deterministic TLS handshake under
-  `FP_DEVICE_EMULATION` (the host's ServerHello random must not change between
-  recording and replay), which is not implemented yet.
+- **No umockdev recording yet.** `tests/goodix5125/custom.py` (enrolment with
+  12 stages, then verify with a deserialized print) is included, the recording
+  (`device`, `custom.pcapng`) and the `drivers_tests` entry are not yet. The
+  replay compares every host transfer with the recording, so it depends on the
+  exact bytes OpenSSL produces for the TLS handshake with the fixed randomness;
+  a different OpenSSL version on CI may change them (to be checked on CI).
+  A recording needs a sensor paired with the all-zero PSK.
 - **One unit tested.** Only one OEM-integrated unit has been tested; the
   sensor-specific calibration and pairing make testing more units hard.
 

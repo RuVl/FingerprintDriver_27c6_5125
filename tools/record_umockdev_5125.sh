@@ -3,7 +3,8 @@
 # для ветки goodix5125-mr, по образцу других драйверов libfprint
 # (tests/README.md, tests/create-driver-test.py).
 #
-# Запускает ПОЛЬЗОВАТЕЛЬ, с пальцем (или другим участком кожи), из корня репо:
+# Запускает ПОЛЬЗОВАТЕЛЬ, пальцем, которым НЕ пользуется для входа
+# (например, левый мизинец), из корня репо:
 #   tools/record_umockdev_5125.sh check    # 1. проверить зависимости
 #   tools/record_umockdev_5125.sh build    # 2. собрать libfprint с introspection
 #   tools/record_umockdev_5125.sh record   # 3. записать (sudo, нужны касания)
@@ -11,12 +12,17 @@
 # Без аргумента выполняются все шаги по очереди.
 #
 # Что меняется в системе (записать в SYSTEM_CHANGES.local.md):
+#   - пакеты: sudo pacman -S --needed umockdev wireshark-cli gobject-introspection
+#     (откат: sudo pacman -Rs umockdev wireshark-cli gobject-introspection)
 #   - sudo modprobe usbmon          (откат: sudo modprobe -r usbmon)
 #   - sudo systemctl stop fprintd   (откат: sudo systemctl start fprintd)
 #   - create-driver-test.py делает USB-сброс порта сенсора (обычный USB reset,
 #     не команда MCU; прошивка и flash не трогаются).
-# В сенсор ничего не пишется: PSK не записывается (GOODIX5125_PROVISION_PSK
-# не задаётся), используется уже записанный нулевой PSK.
+# В сенсор ничего не пишется: в режиме эмуляции (FP_DEVICE_EMULATION=1)
+# драйвер берёт нулевой PSK, никогда не записывает ключ, игнорирует
+# GOODIX5125_* и держит состояние во временном каталоге (удаляется при
+# закрытии), /var/lib/fprint/goodix5125 не трогается. TLS в этом режиме
+# детерминирован, поэтому запись воспроизводится побайтно.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -51,6 +57,7 @@ step_check() {
   fi
   [[ $(git -C "$SRC" branch --show-current) == goodix5125-mr ]] ||
     die "в $SRC должна быть выбрана ветка goodix5125-mr"
+  check_custom_py
   echo "OK: umockdev $(umockdev-run --version), $(tshark --version | head -1)"
 }
 
@@ -67,102 +74,39 @@ step_build() {
     die "python не находит FPrint (GI_TYPELIB_PATH=$GI_TYPELIB_PATH)"
 }
 
-write_custom_py() {
-  mkdir -p "$TEST_DIR"
-  [[ -f $TEST_DIR/custom.py ]] && return
-  cat > "$TEST_DIR/custom.py" <<'EOF'
-#!/usr/bin/env python3
-
-import os
-import sys
-import tempfile
-import traceback
-
-import gi
-
-gi.require_version('FPrint', '2.0')
-from gi.repository import FPrint, GLib
-
-# Exit with error on any exception, included those happening in async callbacks
-sys.excepthook = lambda *args: (traceback.print_exception(*args), sys.exit(1))
-
-# The driver keeps its PSK and adaptive state in a state directory; use a
-# fresh one with the all-zero PSK the recorded sensor was paired with.
-state_dir = tempfile.mkdtemp(prefix='goodix5125-test-')
-psk_path = os.path.join(state_dir, 'psk')
-with open(os.open(psk_path, os.O_WRONLY | os.O_CREAT, 0o600), 'w') as psk:
-    psk.write('0' * 64)
-os.environ['GOODIX5125_STATE_DIR'] = state_dir
-os.environ['GOODIX5125_ENROLL_PAIR'] = '0'
-
-ctx = GLib.main_context_default()
-
-c = FPrint.Context()
-c.enumerate()
-devices = c.get_devices()
-
-d = devices[0]
-del devices
-
-assert d.get_driver() == 'goodix5125'
-assert not d.has_feature(FPrint.DeviceFeature.CAPTURE)
-assert d.has_feature(FPrint.DeviceFeature.IDENTIFY)
-assert d.has_feature(FPrint.DeviceFeature.VERIFY)
-assert not d.has_feature(FPrint.DeviceFeature.STORAGE)
-
-d.open_sync()
-
-template = FPrint.Print.new(d)
-
-
-def enroll_progress(*args):
-    print('enroll progress: ' + str(args))
-
-
-print('enrolling')
-p = d.enroll_sync(template, None, enroll_progress, None)
-print('enroll done')
-
-print('verifying')
-verify_res, verify_print = d.verify_sync(p)
-print('verify done')
-assert verify_res
-
-print('identifying')
-identify_match, identify_print = d.identify_sync([p])
-print('identify done')
-assert identify_match.equal(p)
-
-d.close_sync()
-
-del d
-del c
-EOF
-  chmod +x "$TEST_DIR/custom.py"
-  echo "Создан $TEST_DIR/custom.py"
+check_custom_py() {
+  # Сценарий лежит в ветке goodix5125-mr (коммит "tests: Add goodix5125 unit tests")
+  [[ -f $TEST_DIR/custom.py ]] ||
+    die "нет $TEST_DIR/custom.py (ветка goodix5125-mr устарела?)"
 }
 
 step_record() {
   banner "3. Запись теста"
-  write_custom_py
+  check_custom_py
   [[ -x $BUILD/tests/create-driver-test.py ]] || die "сначала: $0 build"
 
   cat <<EOF
 
 НУЖНО ВАШЕ УЧАСТИЕ
-  1. Запись пойдёт через sudo: usbmon, остановка fprintd, create-driver-test.py.
-  2. Когда появится "enrolling" — прикладывайте ОДИН И ТОТ ЖЕ участок кожи
-     и каждый раз убирайте, пока не будет "enroll done" (12 засчитанных касаний,
-     повторы при плохом касании не считаются).
-  3. "verifying" — одно касание тем же участком; "identifying" — ещё одно.
-  4. Запись содержит OTP сенсора и зашифрованные нулевым PSK кадры, то есть
-     фактически изображения отпечатка. Чтобы не публиковать свой отпечаток,
-     используйте, например, боковую сторону пальца или костяшку (как советует
-     tests/README.md). Публиковать запись только осознанно.
+  Используйте ОДИН палец, которым вы НЕ входите в систему (например, левый
+  мизинец): запись содержит его изображения (зашифрованы нулевым PSK, то есть
+  фактически открыты) и попадёт в MR.
+  1. Сейчас sudo спросит пароль (или палец, если настроен pam_fprintd, — тогда
+     лучше дождаться таймаута и ввести пароль). Дальше sudo без вопросов:
+     usbmon, остановка fprintd, create-driver-test.py.
+  2. "identifying against an empty gallery" — ничего не делать (без касания).
+  3. "enrolling, touch the sensor 12 times" — прикладывайте выбранный палец
+     и каждый раз убирайте, чуть меняя положение, пока не будет
+     "enroll done" (12 засчитанных касаний; строки "enroll progress" с
+     ошибкой — повтор, они не засчитываются).
+  4. "verifying" — одно касание тем же пальцем, дождаться "verify done".
+  5. В конце должно быть "Saving USB capture as test case goodix5125" и
+     "Done!". Если verify не совпал (AssertionError) — запустить record ещё раз.
 EOF
   read -r -p "Продолжить? [y/N] " answer
   [[ $answer == [yY] ]] || exit 0
 
+  sudo -v
   if [[ ! -e /dev/usbmon0 ]]; then
     echo "+ sudo modprobe usbmon"
     sudo modprobe usbmon
@@ -187,7 +131,9 @@ EOF
 Готово. Дальше:
   - $0 replay  — проверить воспроизведение;
   - fprintd снова запустить: sudo systemctl start fprintd;
-  - файлы tests/goodix5125/ НЕ коммитить без решения о публикации.
+  - проверить $TEST_DIR/device (серийный номер и т.п. из sysfs);
+  - дальше агент добавит 'goodix5125' в drivers_tests (tests/meson.build)
+    и закоммитит device + custom.pcapng в коммит тестов.
 EOF
 }
 
@@ -196,12 +142,12 @@ step_replay() {
   [[ -f $TEST_DIR/custom.pcapng ]] || die "нет $TEST_DIR/custom.pcapng: сначала $0 record"
   env FP_DEVICE_EMULATION=1 FP_DRIVERS_ALLOWLIST=goodix5125 G_MESSAGES_DEBUG=all \
     G_DEBUG=fatal-warnings "$PY" "$SRC/tests/umockdev-test.py" --test custom "$TEST_DIR" \
-    && echo "REPLAY OK: можно добавить 'goodix5125': {} в drivers_tests (tests/meson.build)" \
+    && echo "REPLAY OK: можно добавить 'goodix5125': { 'timeout': 120 } в drivers_tests (tests/meson.build)" \
     || cat <<EOF
-REPLAY FAIL. Ожидаемая причина: TLS-рукопожатие недетерминировано (случайный
-ServerHello.random хоста), поэтому записанный Finished сенсора не совпадает при
-воспроизведении. Нужна доработка драйвера: при FP_DEVICE_EMULATION=1
-использовать детерминированный RAND для TLS (см. docs/stage10-mr.md).
+REPLAY FAIL. Смотреть вывод umockdev: "buffer mismatch" значит, что хост
+отправил не те байты, что в записи (недетерминизм в драйвере, другая версия
+OpenSSL/кода, чем при записи), "Replay may be stuck" — расхождение порядка
+команд (например, другое решение алгоритма при регистрации).
 EOF
 }
 
