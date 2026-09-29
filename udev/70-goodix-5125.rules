@@ -1,3 +1,3 @@
 # Goodix 27c6:5125 fingerprint sensor (HONOR MagicBook 16): give the logged-in
 # user raw USB access for the prototype tools.
-SUBSYSTEM=="usb", ATTRS{idVendor}=="27c6", ATTRS{idProduct}=="5125", TAG+="uaccess"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="27c6", ATTR{idProduct}=="5125", TAG+="uaccess"

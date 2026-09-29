@@ -16,9 +16,10 @@
 #   - пакеты: sudo pacman -S --needed umockdev wireshark-cli gobject-introspection
 #     (откат: sudo pacman -Rs umockdev wireshark-cli gobject-introspection)
 #   - sudo modprobe usbmon          (откат: sudo modprobe -r usbmon)
-#   - sudo systemctl stop fprintd   (откат: sudo systemctl start fprintd)
+#   - sudo systemctl stop fprintd   (скрипт запускает его обратно при выходе)
 #   - create-driver-test.py делает USB-сброс порта сенсора (обычный USB reset,
 #     не команда MCU; прошивка и flash не трогаются).
+# modprobe и остановка fprintd сами дописываются в SYSTEM_CHANGES.local.md.
 # В сенсор ничего не пишется: в режиме эмуляции (FP_DEVICE_EMULATION=1)
 # драйвер берёт нулевой PSK, никогда не записывает ключ, игнорирует
 # GOODIX5125_* и держит состояние во временном каталоге (удаляется при
@@ -45,6 +46,33 @@ banner() {
   printf '\n============================================================\n  %s\n============================================================\n' "$1"
 }
 die() { printf 'ОШИБКА: %s\n' "$1" >&2; exit 1; }
+
+# Изменения системы записываются в SYSTEM_CHANGES.local.md (правило CLAUDE.md)
+log_change() {  # log_change <что сделано> <откат>
+  printf -- '- %s: `%s` (tools/record_umockdev_5125.sh). Откат: %s.\n' \
+    "$(date '+%Y-%m-%d %H:%M')" "$1" "$2" >> "$ROOT/SYSTEM_CHANGES.local.md"
+}
+
+# fprintd держит сенсор: остановить на время записи и запустить обратно при
+# любом выходе (в том числе когда create-driver-test.py упал на verify)
+FPRINTD_STOPPED=0
+stop_fprintd() {
+  if systemctl is-active --quiet fprintd; then
+    echo "+ sudo systemctl stop fprintd"
+    sudo systemctl stop fprintd
+    FPRINTD_STOPPED=1
+    log_change "sudo systemctl stop fprintd" "запущен обратно самим скриптом при выходе"
+  fi
+}
+restore_system() {
+  if [[ -d $TEST_DIR ]]; then
+    sudo chown -R "$(id -u):$(id -g)" "$TEST_DIR" || true
+  fi
+  if ((FPRINTD_STOPPED)); then
+    echo "+ sudo systemctl start fprintd"
+    sudo systemctl start fprintd || true
+  fi
+}
 
 export LD_LIBRARY_PATH="$BUILD/libfprint/:$DEPS/lib"
 export GI_TYPELIB_PATH="$BUILD/libfprint/:$DEPS/lib/girepository-1.0"
@@ -121,36 +149,39 @@ EOF
   [[ $answer == [yY] ]] || exit 0
 
   sudo -v
+  trap restore_system EXIT
   if [[ ! -e /dev/usbmon0 ]]; then
     echo "+ sudo modprobe usbmon"
     sudo modprobe usbmon
+    log_change "sudo modprobe usbmon" "\`sudo modprobe -r usbmon\` (или перезагрузка)"
   fi
-  if systemctl is-active --quiet fprintd; then
-    echo "+ sudo systemctl stop fprintd"
-    sudo systemctl stop fprintd
-  fi
+  stop_fprintd
 
   mkdir -p "$ROOT/dumps"
+  local rc=0
   # create-driver-test.py relaunches itself unless LD_LIBRARY_PATH already
   # contains $BUILD/libfprint/; keep ours so that the local libgusb is found.
   sudo env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" GI_TYPELIB_PATH="$GI_TYPELIB_PATH" \
     FP_DEVICE_EMULATION=1 \
     G_MESSAGES_DEBUG="libfprint-goodix5125 libfprint-device" \
     "$PY" "$BUILD/tests/create-driver-test.py" --test custom goodix5125 \
-    2>&1 | tee "$ROOT/dumps/umockdev-record-$(date +%Y%m%d-%H%M%S).log"
+    2>&1 | tee "$ROOT/dumps/umockdev-record-$(date +%Y%m%d-%H%M%S).log" || rc=$?
 
-  sudo chown -R "$(id -u):$(id -g)" "$TEST_DIR"
+  restore_system
+  trap - EXIT
   # umockdev-record пишет device в stdout: отладочные строки GLib там лишние
-  # (umockdev-test.py требует "P: " в первой строке)
-  if [[ -f $TEST_DIR/device ]] && ! head -1 "$TEST_DIR/device" | grep -q '^P: '; then
+  # (umockdev-test.py требует "P: " в первой строке). Без строки "P: " (запись
+  # оборвана) файл не трогаем.
+  if [[ -f $TEST_DIR/device ]] && grep -q '^P: ' "$TEST_DIR/device" &&
+     ! head -1 "$TEST_DIR/device" | grep -q '^P: '; then
     sed -i '/^P: /,$!d' "$TEST_DIR/device"
   fi
+  ((rc == 0)) || die "create-driver-test.py завершился с кодом $rc (см. лог в dumps/); запись не сохранена"
   ls -l "$TEST_DIR"
   cat <<EOF
 
 Готово. Дальше:
   - $0 replay  — проверить воспроизведение;
-  - fprintd снова запустить: sudo systemctl start fprintd;
   - проверить $TEST_DIR/device (серийный номер и т.п. из sysfs);
   - дальше агент добавит 'goodix5125' в drivers_tests (tests/meson.build)
     и закоммитит device + custom.pcapng в коммит тестов.
@@ -172,10 +203,8 @@ EOF
   [[ $answer == [yY] ]] || exit 0
 
   sudo -v
-  if systemctl is-active --quiet fprintd; then
-    echo "+ sudo systemctl stop fprintd"
-    sudo systemctl stop fprintd
-  fi
+  trap restore_system EXIT
+  stop_fprintd
   mkdir -p "$ROOT/dumps"
   local log
   log="$ROOT/dumps/umockdev-try-$(date +%Y%m%d-%H%M%S).log"

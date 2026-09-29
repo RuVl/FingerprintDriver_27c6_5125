@@ -23,7 +23,6 @@ COMMAND_SWITCH_TO_SLEEP_MODE = 0x92
 COMMAND_SET_POWERDOWN_SCAN_FREQUENCY = 0x94
 COMMAND_ENABLE_CHIP = 0x96
 COMMAND_RESET = 0xa2
-COMMAND_MCU_ERASE_APP = 0xa4
 COMMAND_READ_OTP = 0xa6
 COMMAND_FIRMWARE_VERSION = 0xa8
 COMMAND_SET_POV_CONFIG = 0xac
@@ -36,9 +35,6 @@ COMMAND_TLS_SUCCESSFULLY_ESTABLISHED = 0xd4
 COMMAND_POV_IMAGE_CHECK = 0xd6
 COMMAND_PRESET_PSK_WRITE_R = 0xe0
 COMMAND_PRESET_PSK_READ_R = 0xe4
-COMMAND_WRITE_FIRMWARE = 0xf0
-COMMAND_READ_FIRMWARE = 0xf2
-COMMAND_CHECK_FIRMWARE = 0xf4
 COMMAND_GET_IAP_VERSION = 0xf6
 
 
@@ -140,7 +136,7 @@ def check_ack(data: bytes, command: int):
 def decode_mcu_state(data: bytes):
     return data[0], data[1] & 0x1 == 0x1, data[1] & 0x2 == 0x2, data[
         1] & 0x4 == 0x4, data[2] >> 4, data[9], struct.unpack(
-            "<H", data[10:11]), data[12], data[13]
+            "<H", data[10:12])[0], data[12], data[13]
 
 
 class Device:
@@ -334,7 +330,7 @@ class Device:
 
             message = b""
             message += b"\x01"
-            for i in length:
+            for i in range(length):
                 if len(value[i]) != 2:
                     raise ValueError("Invalid value")
 
@@ -758,28 +754,6 @@ class Device:
 
         flags = struct.unpack("<I", message[1:5])[0]
         return True, flags, message[9:9 + psk_length]
-
-    def read_firmware(self, offset: int, length: int):
-        print(f"read_firmware({offset}, {length})")
-
-        self.protocol.write(
-            encode_message_pack(
-                encode_message_protocol(
-                    struct.pack("<I", offset) + struct.pack("<I", length),
-                    COMMAND_READ_FIRMWARE)))
-
-        if isinstance(self.protocol, protocol.USBProtocol):
-            check_ack(
-                check_message_protocol(
-                    check_message_pack(self.protocol.read()), COMMAND_ACK),
-                COMMAND_READ_FIRMWARE)
-
-        message = check_message_protocol(
-            check_message_pack(self.protocol.read()), COMMAND_READ_FIRMWARE)
-        if len(message) < length:
-            raise SystemError("Invalid response length")
-
-        return message[:length]
 
     def get_iap_version(self, length: int):
         print(f"get_iap_version({length})")

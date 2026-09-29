@@ -658,6 +658,16 @@ goodix_chicago_preprocessor_load_state (GoodixChicagoPreprocessor *self,
   data += sizeof (self->field);
   STATE_FIELDS (X)
 #undef X
+  /* The state is only checksummed, not authenticated: bound the counters
+   * that end up in divisors (n + 1) or averages, as the updates do. */
+  if (self->framenum == G_MAXUINT32 || self->multiplier_count > 30 ||
+      self->history_count < 0 || self->history_count > 50 ||
+      self->residue_count < 0 || self->residue_count > 5)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           "openchicago: preprocessor state out of range");
+      return FALSE;
+    }
   return TRUE;
 }
 

@@ -236,7 +236,9 @@ feature_state_save (const GoodixChicagoFeatureState *fs, GByteArray *out)
   put_u32 (out, fs->consensus.inactive_count);
 }
 
-static void
+/* The state is only checksummed, not authenticated: history_count indexes
+ * history[], the other fields are bounded by what getFeature produces. */
+static gboolean
 feature_state_load (GoodixChicagoFeatureState *fs, const guint8 *p)
 {
   fs->last_coverage = (gint) get_u32 (p);
@@ -251,6 +253,13 @@ feature_state_load (GoodixChicagoFeatureState *fs, const guint8 *p)
   fs->consensus.neutral_percent = get_u32 (p + 8);
   fs->consensus.density_class = get_u32 (p + 12);
   fs->consensus.inactive_count = get_u32 (p + 16);
+  return fs->history_count >= 0 && fs->history_count <= 3 &&
+         fs->stable_count >= 0 && fs->stable_count <= 5 &&
+         fs->last_level >= 0 && fs->last_level <= 0xff &&
+         fs->consensus.negative_percent <= 100 &&
+         fs->consensus.positive_percent <= 100 &&
+         fs->consensus.neutral_percent <= 100 &&
+         fs->consensus.density_class <= 2;
 }
 
 GBytes *
@@ -372,7 +381,12 @@ oc_session_new_from_state (GBytes  *state,
                            "openchicago: bad getFeature section");
       return NULL;
     }
-  feature_state_load (&self->feature_state, body);
+  if (!feature_state_load (&self->feature_state, body))
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           "openchicago: feature state out of range");
+      return NULL;
+    }
   return g_steal_pointer (&self);
 }
 

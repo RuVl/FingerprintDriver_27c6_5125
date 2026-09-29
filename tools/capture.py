@@ -29,12 +29,28 @@ from tls_check import wake
 # the 5110 sends 88x80 and libfprint's goodix511 crops that to 64x80.
 WIDTH, HEIGHT = 64, 80
 FRAME_BYTES = WIDTH * HEIGHT * 3 // 2
-BLOCKED_COMMANDS = {
-    goodix.COMMAND_MCU_ERASE_APP,
-    goodix.COMMAND_WRITE_FIRMWARE,
-    goodix.COMMAND_READ_FIRMWARE,
-    goodix.COMMAND_CHECK_FIRMWARE,
-    goodix.COMMAND_PRESET_PSK_WRITE_R,
+# Allowlist: everything capture.py, fdt_test.py and collect.py send.  Firmware
+# erase/write/check/read and PSK writes are never on it (see CLAUDE.md).
+ALLOWED_COMMANDS = {
+    goodix.COMMAND_NOP,
+    goodix.COMMAND_MCU_GET_IMAGE,
+    goodix.COMMAND_MCU_SWITCH_TO_FDT_DOWN,
+    goodix.COMMAND_MCU_SWITCH_TO_FDT_UP,
+    goodix.COMMAND_MCU_SWITCH_TO_FDT_MODE,
+    goodix.COMMAND_NAV,
+    goodix.COMMAND_MCU_SWITCH_TO_IDLE_MODE,
+    goodix.COMMAND_WRITE_SENSOR_REGISTER,
+    goodix.COMMAND_READ_SENSOR_REGISTER,
+    goodix.COMMAND_UPLOAD_CONFIG_MCU,
+    goodix.COMMAND_SET_POWERDOWN_SCAN_FREQUENCY,
+    goodix.COMMAND_ENABLE_CHIP,
+    goodix.COMMAND_RESET,
+    goodix.COMMAND_READ_OTP,
+    goodix.COMMAND_FIRMWARE_VERSION,
+    goodix.COMMAND_QUERY_MCU_STATE,
+    goodix.COMMAND_REQUEST_TLS_CONNECTION,
+    goodix.COMMAND_TLS_SUCCESSFULLY_ESTABLISHED,
+    goodix.COMMAND_PRESET_PSK_READ_R,
 }
 # mcu_switch_to_fdt_mode payload the Windows driver sends first on the 5125
 # (available314/goodix-27c6-5125, MCU_SWITCH_TO_FDT_MODE_BUF)
@@ -44,12 +60,15 @@ FDT_MODE_INITIAL = bytes.fromhex("0901b3b3c3c3a8a8b5b5a8a8b7b7")
 class CaptureUSBProtocol(protocol.USBProtocol):
 
     def write(self, data, timeout=5):
-        if data[0] == goodix.FLAGS_MESSAGE_PROTOCOL:
-            if data[4] in BLOCKED_COMMANDS:
-                raise PermissionError(f"Blocked command {data[4]:#04x}")
-            if data[4] == goodix.COMMAND_RESET and data[7] & 0x2:
-                raise PermissionError("Blocked MCU reset")
-        super().write(data, timeout)
+        if data[0] == goodix.FLAGS_TRANSPORT_LAYER_SECURITY:
+            return super().write(data, timeout)
+        if data[0] != goodix.FLAGS_MESSAGE_PROTOCOL:
+            raise PermissionError(f"Blocked packet with flags {data[0]:#x}")
+        if data[4] not in ALLOWED_COMMANDS:
+            raise PermissionError(f"Blocked command {data[4]:#04x}")
+        if data[4] == goodix.COMMAND_RESET and data[7] & 0x2:
+            raise PermissionError("Blocked MCU reset")
+        return super().write(data, timeout)
 
 
 def fdt_payload(mode: int, reply: bytes) -> bytes:

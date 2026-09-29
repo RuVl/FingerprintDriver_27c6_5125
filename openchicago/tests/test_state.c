@@ -96,6 +96,32 @@ corrupt (GBytes *state)
   return g_bytes_new_take (b, n);
 }
 
+/* Set the u32 at @offset of section @tag and fix the CRC: a consistent file
+ * with an out-of-range counter. */
+static GBytes *
+patch_u32 (GBytes *state, const char tag[4], gsize offset, guint32 value)
+{
+  gsize n;
+  const guint8 *d = g_bytes_get_data (state, &n);
+  guint8 *b = g_memdup2 (d, n);
+  guint32 le = GUINT32_TO_LE (value), crc;
+
+  for (gsize p = 8; p + 8 < n;)
+    {
+      guint32 len = b[p + 4] | b[p + 5] << 8 | b[p + 6] << 16 | (guint32) b[p + 7] << 24;
+      if (!memcmp (b + p, tag, 4))
+        {
+          g_assert (offset + 4 <= len);
+          memcpy (b + p + 8 + offset, &le, 4);
+          break;
+        }
+      p += 8 + len;
+    }
+  crc = GUINT32_TO_LE (crc32_ieee (b, n - 4));
+  memcpy (b + n - 4, &crc, 4);
+  return g_bytes_new_take (b, n);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -181,6 +207,30 @@ main (int argc, char **argv)
       {
         printf ("damaged state accepted\n");
         bad++;
+      }
+  }
+  /* out-of-range counters with a valid CRC must be refused too:
+   * FEAT history_count (index into history[]), PREP framenum (n + 1) */
+  {
+    static const struct { const char *tag; gsize offset; guint32 value; } cases[] = {
+      { "FEAT", 4, G_MAXUINT32 }, { "FEAT", 4, 4 }, { "PREP", 0, G_MAXUINT32 },
+    };
+    g_autoptr(OcSession) s = oc_session_new (bg + (gsize) nat0 * PX, &error);
+    g_autoptr(GBytes) st = oc_session_save_state (s);
+
+    for (guint i = 0; i < G_N_ELEMENTS (cases); i++)
+      {
+        g_autoptr(GBytes) broken = patch_u32 (st, cases[i].tag, cases[i].offset,
+                                              cases[i].value);
+        g_autoptr(GError) e2 = NULL;
+        g_autoptr(OcSession) c = oc_session_new_from_state (broken, &e2);
+
+        if (c)
+          {
+            printf ("%s+%zu = %u accepted\n", cases[i].tag, cases[i].offset,
+                    cases[i].value);
+            bad++;
+          }
       }
   }
   printf ("%s\n", bad ? "FAIL" : "OK");

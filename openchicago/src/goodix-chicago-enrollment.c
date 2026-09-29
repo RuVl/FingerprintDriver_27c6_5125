@@ -3428,6 +3428,17 @@ invalid_subtemplate:
       goto invalid;
     }
 
+  /* The relations of subtemplate i with the older ones are
+   * relation_base + [0, i); all of them must exist. */
+  for (guint index = 0; index < self->subtemplates->len; index++)
+    {
+      const GoodixChicagoSubtemplate *subtemplate =
+        g_ptr_array_index (self->subtemplates, index);
+
+      if (subtemplate->relation_base > relation_count ||
+          relation_count - subtemplate->relation_base < index)
+        goto invalid;
+    }
   g_array_set_size (self->relations, relation_count);
   for (guint index = 0; index < relation_count; index++)
     {

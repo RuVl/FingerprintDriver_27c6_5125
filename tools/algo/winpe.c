@@ -63,6 +63,7 @@ static MS void k_SetLastError(uint32_t e) { g_lasterr = e; }
 static MS void *k_GetProcessHeap(void) { return (void *)1; }
 static MS void *k_HeapAlloc(void *h, uint32_t flags, uint64_t size) {
   (void)h;
+  if (size > UINT64_MAX - 16) return NULL;
   uint64_t *p = malloc(size + 16);
   if (!p) return NULL;
   p[0] = size;
@@ -70,12 +71,16 @@ static MS void *k_HeapAlloc(void *h, uint32_t flags, uint64_t size) {
   return p + 2;
 }
 static MS void *k_HeapReAlloc(void *h, uint32_t flags, void *ptr, uint64_t sz) {
-  (void)h; (void)flags;
+  (void)h;
   if (!ptr) return k_HeapAlloc(h, flags, sz);
+  if (sz > UINT64_MAX - 16) return NULL;
   uint64_t *p = (uint64_t *)ptr - 2;
+  uint64_t old = p[0];
   uint64_t *n = realloc(p, sz + 16);
   if (!n) return NULL;
   n[0] = sz;
+  // HEAP_ZERO_MEMORY: the grown part reads as zero, as on Windows
+  if ((flags & 8) && sz > old) memset((uint8_t *)(n + 2) + old, 0, sz - old);
   return n + 2;
 }
 static MS int k_HeapFree(void *h, uint32_t flags, void *ptr) {
@@ -100,7 +105,10 @@ static MS void *k_DecodePointer(void *p) { return p; }
 // ---- TLS ----
 static void *g_tls[256];
 static uint32_t g_tls_next = 1;
-static MS uint32_t k_TlsAlloc(void) { return g_tls_next++; }
+#define TLS_OUT_OF_INDEXES 0xffffffffu
+static MS uint32_t k_TlsAlloc(void) {
+  return g_tls_next < 256 ? g_tls_next++ : TLS_OUT_OF_INDEXES;
+}
 static MS int k_TlsFree(uint32_t i) { (void)i; return 1; }
 static MS void *k_TlsGetValue(uint32_t i) { return i < 256 ? g_tls[i] : NULL; }
 static MS int k_TlsSetValue(uint32_t i, void *v) {
@@ -109,7 +117,7 @@ static MS int k_TlsSetValue(uint32_t i, void *v) {
 }
 
 // ---- fiber-local storage (newer CRTs): same single-thread table as TLS ----
-static MS uint32_t k_FlsAlloc(void *cb) { (void)cb; return g_tls_next++; }
+static MS uint32_t k_FlsAlloc(void *cb) { (void)cb; return k_TlsAlloc(); }
 
 // ---- critical sections / slist (single threaded => no-ops) ----
 static MS int k_InitializeCriticalSectionAndSpinCount(void *c, uint32_t s) {
