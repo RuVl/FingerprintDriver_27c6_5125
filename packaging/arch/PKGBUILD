@@ -8,7 +8,7 @@
 
 pkgname=libfprint-goodix5125-git
 _pkgname=libfprint
-pkgver=1.94.100.r7.gac792f8
+pkgver=1.94.100.r12.g3caf7f0
 pkgrel=1
 pkgdesc="Library for fingerprint readers, with the Goodix 27c6:5125 driver (openchicago)"
 url="https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/648"

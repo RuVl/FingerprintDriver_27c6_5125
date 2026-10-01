@@ -20,7 +20,7 @@ submitted upstream as `goodix5125`.
 - Only one unit has been tested.
 - The libfprint driver is on its way upstream. Until the branch is public,
   the Arch package in `packaging/arch/` builds only from a local clone of that
-  branch.
+  branch (see [Installing on Arch Linux](#installing-on-arch-linux)).
 
 ## ⚠️ Safety
 
@@ -34,6 +34,128 @@ submitted upstream as `goodix5125`.
   is set.
 - Frames and templates are biometric data. Keep captures (`dumps/`) out of
   git.
+
+## Installing on Arch Linux
+
+`packaging/arch/PKGBUILD` builds `libfprint-goodix5125-git`, a drop-in
+replacement for `extra/libfprint` with every upstream driver plus
+`goodix5125`. It works with `fprintd` from `extra`.
+
+### 1. Get the driver source
+
+The package builds from the `openchicago` branch of a libfprint clone, by
+default `upstream/libfprint-mr648` next to this README. That branch is not
+public yet; it will be linked here once the upstream merge request is open.
+To build from a clone in another place:
+
+```sh
+export LIBFPRINT_OPENCHICAGO_REPO=/path/to/libfprint
+```
+
+### 2. Build and install
+
+```sh
+sudo pacman -S --needed base-devel fprintd
+cd packaging/arch
+makepkg -si -C        # pacman offers to replace libfprint: answer yes
+sudo systemctl restart fprintd
+pacman -Q libfprint-goodix5125-git
+```
+
+`makepkg` runs the libfprint test suite before packaging. To update later,
+pull the branch, run the same commands again and restart fprintd.
+
+### 3. Pair the sensor (once)
+
+The sensor and the host share a TLS key (PSK). The driver reads it from
+`/var/lib/fprint/goodix5125/psk` (64 hex digits, mode 0600) and checks it
+against the hash the sensor reports. It never writes a key on its own.
+
+The Windows driver pairs with the all-zero key, and so does
+`tools/provision.py`. Try that one first:
+
+```sh
+sudo install -d -m 700 /var/lib/fprint/goodix5125
+printf '%064d\n' 0 | sudo install -m 600 /dev/stdin /var/lib/fprint/goodix5125/psk
+```
+
+If the key does not match, enrolment fails with a pairing error and the
+sensor is left untouched. The driver can then write a new random key, which
+breaks Windows Hello on a dual-boot machine:
+
+```sh
+sudo rm /var/lib/fprint/goodix5125/psk
+sudo systemctl set-environment GOODIX5125_PROVISION_PSK=random
+sudo systemctl restart fprintd
+fprintd-enroll -f right-thumb   # the first open writes and saves the key
+sudo systemctl unset-environment GOODIX5125_PROVISION_PSK
+sudo systemctl restart fprintd
+```
+
+### 4. Enrol and verify
+
+```sh
+fprintd-enroll -f right-thumb
+fprintd-verify
+```
+
+- The first `enroll-stage-passed` appears at once, before any touch. fprintd
+  first checks that the finger is not enrolled yet, and with no prints stored
+  that check passes immediately.
+- Then touch the sensor until `enroll-completed` (13 stages). Use the same
+  part of the finger every time and shift it only slightly. Touches spread
+  over the whole finger make a template that later matches poorly.
+- `enroll-finger-not-centered` means the touch overlaps the template too much
+  and adds nothing new: shift the finger a little.
+
+### 5. Fingerprint for sudo (optional)
+
+Add as the first `auth` line of `/etc/pam.d/sudo` (keep a root shell open
+while editing):
+
+```
+auth sufficient pam_fprintd.so max-tries=3 timeout=15
+```
+
+The password still works after three failed touches or the timeout.
+
+### Uninstall
+
+```sh
+sudo pacman -S libfprint                 # replaces the package
+sudo systemctl restart fprintd
+sudo rm -r /var/lib/fprint/goodix5125    # driver state and the host key
+```
+
+Remove the `pam_fprintd` line first if you added it. Prints enrolled with
+`fprintd` stay in `/var/lib/fprint/<user>/`; `fprintd-delete <user>` removes
+them.
+
+### Troubleshooting
+
+- "Device disabled to prevent overheating": libfprint limits how long a
+  sensor stays active. Wait a minute and try again.
+- Debug log of the driver:
+
+  ```sh
+  sudo systemctl set-environment G_MESSAGES_DEBUG=all
+  sudo systemctl restart fprintd
+  # reproduce, then:
+  journalctl -u fprintd --since -5min
+  sudo systemctl unset-environment G_MESSAGES_DEBUG
+  sudo systemctl restart fprintd
+  ```
+
+  `enroll frame: … q=… c=…` lines show quality and coverage of each touch,
+  `match: score …` lines the result of each verify attempt.
+- The driver keeps its state in `/var/lib/fprint/goodix5125`
+  (`openchicago.state`, `learned/`). fprintd lists that directory as if it
+  were a user; this is harmless.
+
+The prototype tools in `tools/` need raw USB access. Stop fprintd first and
+install the udev rule:
+`sudo install -m 644 udev/70-goodix-5125.rules /etc/udev/rules.d/`, then
+`sudo udevadm control --reload && sudo udevadm trigger`.
 
 ## Layout
 
