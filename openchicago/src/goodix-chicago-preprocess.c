@@ -662,6 +662,8 @@ goodix_chicago_preprocessor_load_state (GoodixChicagoPreprocessor *self,
    * that end up in divisors (n + 1) or averages, as the updates do. */
   if (self->framenum == G_MAXUINT32 || self->multiplier_count > 30 ||
       self->history_count < 0 || self->history_count > 50 ||
+      self->history_threshold < 0 || self->history_threshold > 85 ||
+      self->history_coverage < 0 || self->history_coverage > 100 ||
       self->residue_count < 0 || self->residue_count > 5)
     {
       g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,

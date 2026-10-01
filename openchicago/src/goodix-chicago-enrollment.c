@@ -464,8 +464,10 @@ warp_config1_plane (const guint8 *source,
                     guint         output_height,
                     guint8       *output)
 {
-  const gint32 determinant = transform[0] * transform[4] -
-                             transform[1] * transform[3];
+  /* 32-bit wraparound (unsigned: defined in C) for degenerate transforms */
+  const gint32 determinant =
+    (gint32) ((guint32) transform[0] * (guint32) transform[4] -
+              (guint32) transform[1] * (guint32) transform[3]);
   gint32 inverse_a;
   gint32 inverse_b;
   gint32 inverse_c;
@@ -3379,7 +3381,7 @@ goodix_chicago_enrollment_unpack (const guint8 *data,
       metric_data_build_position_map (&subtemplate->metric_data);
       subtemplate->record_count = record_count;
       subtemplate->records = g_new0 (GoodixChicagoFeatureRecord,
-                                     record_count);
+                                     MAX (record_count, 1));
       for (guint record = 0; record < record_count; record++)
         packed_decode_record (records + record * 32,
                               &subtemplate->records[record]);

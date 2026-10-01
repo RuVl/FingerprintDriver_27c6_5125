@@ -713,24 +713,30 @@ affine_from_three_points (const GoodixChicagoMatchPoint source[3],
 static gboolean
 transform_is_rigid_and_scaled (const gint32 transform[6])
 {
-  const gint64 a = transform[0];
-  const gint64 b = transform[1];
-  const gint64 c = transform[3];
-  const gint64 d = transform[4];
-  const gint64 m00 = a * a + b * b;
-  const gint64 m01 = a * c + b * d;
-  const gint64 m11 = c * c + d * d;
-  const gint64 trace = m00 + m11;
-  const gint64 discriminant = trace * trace +
-                              4 * (m01 * m01 - m11 * m00);
-  const gint64 upper_delta = ((gint64) 0xa3 << 9) - trace;
-  const gint64 lower_delta = ((gint64) 0x191 << 9) - trace;
+  gint64 a, b, c, d, m00, m01, m11, trace, discriminant;
+  gint64 upper_delta, lower_delta;
 
-  return ABS (transform[0] - transform[4]) < 0x32 &&
-         ABS (transform[3] + transform[1]) < 0x32 &&
-         ABS (transform[0]) < 0x12c && ABS (transform[1]) < 0x12c &&
-         ABS (transform[3]) < 0x12c && ABS (transform[4]) < 0x12c &&
-         discriminant >= 0 && trace >= 0 && upper_delta <= 0 &&
+  /* The coefficient bounds come first: degenerate (collinear) triples give
+   * coefficients near 2^29, whose products below would overflow. */
+  if (ABS (transform[0] - transform[4]) >= 0x32 ||
+      ABS (transform[3] + transform[1]) >= 0x32 ||
+      ABS (transform[0]) >= 0x12c || ABS (transform[1]) >= 0x12c ||
+      ABS (transform[3]) >= 0x12c || ABS (transform[4]) >= 0x12c)
+    return FALSE;
+
+  a = transform[0];
+  b = transform[1];
+  c = transform[3];
+  d = transform[4];
+  m00 = a * a + b * b;
+  m01 = a * c + b * d;
+  m11 = c * c + d * d;
+  trace = m00 + m11;
+  discriminant = trace * trace + 4 * (m01 * m01 - m11 * m00);
+  upper_delta = ((gint64) 0xa3 << 9) - trace;
+  lower_delta = ((gint64) 0x191 << 9) - trace;
+
+  return discriminant >= 0 && trace >= 0 && upper_delta <= 0 &&
          lower_delta >= 0 && upper_delta * upper_delta > discriminant &&
          lower_delta * lower_delta > discriminant;
 }
@@ -851,10 +857,13 @@ goodix_chicago_match_estimate_geometry (
                                 0x80) >> 8) + transform[5]);
                   const gint32 dx = predicted_x - target_points[index].x;
                   const gint32 dy = predicted_y - target_points[index].y;
-                  const gint32 squared = dx * dx + dy * dy;
+                  gint32 squared;
 
-                  if (ABS (dx) <= 0x280 && ABS (dy) <= 0x280 &&
-                      squared < 0x64000)
+                  /* far-off pairs would overflow the square */
+                  if (ABS (dx) > 0x280 || ABS (dy) > 0x280)
+                    continue;
+                  squared = dx * dx + dy * dy;
+                  if (squared < 0x64000)
                     {
                       inliers[index] = 1;
                       inlier_count++;
@@ -1296,8 +1305,11 @@ match_transform_shape_type24 (const gint32 transform[6],
   const gint32 b = transform[1];
   const gint32 c = transform[3];
   const gint32 d = transform[4];
-  const gint32 norm_ac = a * a + c * c;
-  const gint32 norm_bd = b * b + d * d;
+  /* 32-bit wraparound (unsigned: defined in C) for degenerate transforms */
+  const gint32 norm_ac = (gint32) ((guint32) a * (guint32) a +
+                                   (guint32) c * (guint32) c);
+  const gint32 norm_bd = (gint32) ((guint32) b * (guint32) b +
+                                   (guint32) d * (guint32) d);
   const gint32 root_ac = (gint32) match_integer_sqrt ((guint32) norm_ac);
   gint32 horizontal;
   gint32 degrees;

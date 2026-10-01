@@ -339,5 +339,12 @@ goodix_chicago_calibration_get_temporal_sample_count (
 
   *sample_count = read_le32 (
     data + GOODIX_CHICAGO_TEMPORAL_SAMPLE_COUNT_OFFSET);
+  /* used as a divisor n + 1; outside the payload checksums */
+  if (*sample_count == G_MAXUINT32)
+    {
+      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           "gdix51c0: Chicago calibration sample count out of range");
+      return FALSE;
+    }
   return TRUE;
 }
