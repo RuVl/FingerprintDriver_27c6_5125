@@ -37,7 +37,9 @@ The protocol, pairing, state handling and device emulation are documented in
   flash erase commands are not implemented.
 - **Session.** Volatile initialisation on every open (MCU reset, chip ID, OTP
   check, MCU configuration with the OTP calibration), then a TLS 1.2 PSK
-  session with the host as the server (OpenSSL, memory BIOs). Images arrive
+  session with the host as the server (OpenSSL, memory BIOs, only
+  `PSK-AES128-GCM-SHA256`, the suite the sensor uses). After a failed or
+  cancelled capture the next action initialises the sensor again. Images arrive
   as TLS application data.
 - **Pairing.** The driver checks the sensor's PSK hash against the host PSK
   and **never writes a PSK on its own**; writing needs
@@ -100,6 +102,12 @@ files, and the sources are formatted with `scripts/uncrustify.cfg`.
   the TLS handshake with the fixed randomness. A different OpenSSL version on
   CI could change them; this is to be checked on CI. A new recording needs a
   sensor paired with the all-zero PSK.
+- **Synchronous initialisation.** The volatile initialisation (MCU reset,
+  OTP, configuration, TLS handshake, background frame) runs with synchronous
+  USB transfers at the start of the first action after `open()`. It takes
+  less than a second on the tested unit, but blocks the main loop meanwhile
+  and cannot be cancelled. The finger wait, capture and lift detection are
+  asynchronous. I can turn the initialisation into an `FpiSsm` if you prefer.
 - **One unit tested.** Only one OEM-integrated unit has been tested; the
   sensor-specific calibration and pairing make testing more units hard.
 
