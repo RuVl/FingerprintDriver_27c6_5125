@@ -692,10 +692,8 @@ enroll_add_impl (OcSession      *self,
       if (goodix_chicago_runtime_preprocess (self->preprocessor, extra_frame, TRUE, f2) &&
           engine_extra_is_better (f2, f))
         {
-          GoodixChicagoRuntimeFrame *t = f;
-
-          f = f2;
-          f2 = t;
+          g_free (f);
+          f = g_steal_pointer (&f2);
         }
     }
   result->status = f->status;

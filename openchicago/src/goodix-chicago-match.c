@@ -1823,6 +1823,9 @@ goodix_chicago_match_score_subtemplate_type24 (
   record->probe_coverage = probe->coverage;
   record->gallery_quality = gallery->quality;
   record->gallery_coverage = gallery->coverage;
+  /* the candidate ranges below cover the active records only */
+  g_return_if_fail (gallery->active_count <= gallery_count);
+  g_return_if_fail (probe->active_count <= probe->record_count);
 
   /* attempt 1: == goodix_chicago_match_ordinary_correspondences, keeping the
    * distance matrix for attempt 2 */

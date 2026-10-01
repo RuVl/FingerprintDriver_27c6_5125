@@ -102,7 +102,10 @@ goodix_chicago_runtime_prepare_probe (
   g_autofree GoodixChicagoRuntimeFrame *own = NULL;
 
   if (!frame)
-    frame = own = g_new (GoodixChicagoRuntimeFrame, 1);
+    {
+      own = g_new (GoodixChicagoRuntimeFrame, 1);
+      frame = own;
+    }
   if (!goodix_chicago_runtime_preprocess (preprocessor, raw, !identify, frame))
     {
       if (reject)

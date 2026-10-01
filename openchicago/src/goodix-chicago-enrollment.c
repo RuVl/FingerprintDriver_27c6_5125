@@ -359,10 +359,14 @@ goodix_chicago_enrollment_estimate_transform (
                 transform[5];
               const gint64 dx = predicted_x - target_points[index].x;
               const gint64 dy = predicted_y - target_points[index].y;
-              const gint64 squared = dx * dx + dy * dy;
+              gint64 squared;
 
-              if (ABS (dx) <= 0x280 && ABS (dy) <= 0x280 &&
-                  squared < 0x64000)
+              /* far-off predictions (degenerate transforms) would overflow
+               * the square; they are no inliers anyway */
+              if (ABS (dx) > 0x280 || ABS (dy) > 0x280)
+                continue;
+              squared = dx * dx + dy * dy;
+              if (squared < 0x64000)
                 {
                   inliers[index] = 1;
                   inlier_count++;
@@ -1422,21 +1426,26 @@ capacity_redundancy_score (
   return total > 0 ? covered * 100 / total : 100;
 }
 
+static GoodixChicagoRelation *
+relation_at (const GoodixChicagoEnrollment *self,
+             guint                          relation_index)
+{
+  if (relation_index >= self->relations->len)
+    return NULL;
+  return &g_array_index (self->relations, GoodixChicagoRelation,
+                         relation_index);
+}
+
 static const GoodixChicagoRelation *
 relation_between_subtemplates (const GoodixChicagoEnrollment *self,
                                guint                          newer,
                                guint                          older)
 {
   const GoodixChicagoSubtemplate *subtemplate;
-  guint relation_index;
 
   g_return_val_if_fail (newer > older, NULL);
   subtemplate = g_ptr_array_index (self->subtemplates, newer);
-  relation_index = subtemplate->relation_base + older;
-  if (relation_index >= self->relations->len)
-    return NULL;
-  return &g_array_index (self->relations, GoodixChicagoRelation,
-                         relation_index);
+  return relation_at (self, subtemplate->relation_base + older);
 }
 
 /* +0x5da80 mode zero returns the transform from @second to @first. */
@@ -2328,14 +2337,16 @@ goodix_chicago_enrollment_insert_next (
        * packed graph is rebuilt separately by +0x5ded0/+0x5d400 from real
        * relations with more than two inliers, so this synthetic zero-inlier
        * anchor slot is deliberately not serialized. */
-      anchor_relation = &g_array_index (
-        self->relations, GoodixChicagoRelation,
-        new_subtemplate->relation_base + self->group_anchor);
-      memcpy (anchor_relation->transform, current_to_anchor,
-              sizeof (anchor_relation->transform));
-      if (candidate != self->group_anchor &&
-          anchor_relation->inlier_count < 0)
-        anchor_relation->inlier_count = 0;
+      anchor_relation = relation_at (
+        self, new_subtemplate->relation_base + self->group_anchor);
+      if (anchor_relation)
+        {
+          memcpy (anchor_relation->transform, current_to_anchor,
+                  sizeof (anchor_relation->transform));
+          if (candidate != self->group_anchor &&
+              anchor_relation->inlier_count < 0)
+            anchor_relation->inlier_count = 0;
+        }
       has_current_to_anchor = TRUE;
     }
 
