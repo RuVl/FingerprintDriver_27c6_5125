@@ -11,6 +11,7 @@ Fingerprint_*.zip
 # --- локальные данные и логи (см. CLAUDE.md) ---
 dumps/
 SYSTEM_CHANGES.local.md
+*.local.md
 
 # --- локально распакованные зависимости (не в систему) ---
 deps/

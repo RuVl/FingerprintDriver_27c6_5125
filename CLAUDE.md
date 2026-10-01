@@ -53,9 +53,9 @@
 ## Команды
 
 ```sh
-# Python-инструменты
-cd tools && ../.venv/bin/python probe.py
-../.venv/bin/python -m pytest -q wbgen fwre
+# Python-инструменты (окружение uv из pyproject.toml, создаётся само)
+cd tools && uv run python probe.py
+uv run pytest -q wbgen fwre
 
 # Сборка libfprint с драйвером
 cd libfprint
@@ -69,7 +69,7 @@ tools/libfprint_test.sh          # снимок + регистрация + пр�
 tools/libfprint_verify_test.sh   # 10 проверок по сохранённой регистрации
 
 # Offline-оценка вендорского алгоритма на датасете (нужны dumps/dataset, win-driver/)
-cd tools/algo && ../../.venv/bin/python export_raw.py
+cd tools/algo && uv run python export_raw.py
 cc -O1 -o algo_eval4 algo_eval4.c winpe.c algolog.c && ALGO=milan ./algo_eval4 15
 ```
 

@@ -181,6 +181,20 @@ install the udev rule:
 | `udev/` | udev rule that gives the logged-in user raw USB access for the prototype tools. |
 | `docs/` | Stage-by-stage notes and results (in Russian), and the upstream MR description. |
 
+## Python tools
+
+The tools in `tools/` run in a [uv](https://docs.astral.sh/uv/) environment
+described by `pyproject.toml` and `uv.lock`; `uv run` creates it on first use.
+
+```sh
+cd tools
+uv run python probe.py        # read-only device probe
+uv run pytest -q wbgen fwre   # unit tests
+```
+
+Talking to the sensor needs the udev rule above and fprintd stopped
+(`sudo systemctl stop fprintd`).
+
 ## Building openchicago
 
 ```sh
