@@ -18,9 +18,10 @@ submitted upstream as `goodix5125`.
 - A single touch is not always enough. On the recorded dataset about half of
   the genuine single touches match, and no impostor touch has matched.
 - Only one unit has been tested.
-- The libfprint driver is on its way upstream. Until the branch is public,
-  the Arch package in `packaging/arch/` builds only from a local clone of that
-  branch (see [Installing on Arch Linux](#installing-on-arch-linux)).
+- The libfprint driver is under review upstream as
+  [libfprint!669](https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/669).
+  The Arch package in `packaging/arch/` builds that branch (see
+  [Installing on Arch Linux](#installing-on-arch-linux)).
 
 ## ⚠️ Safety
 
@@ -41,15 +42,15 @@ submitted upstream as `goodix5125`.
 replacement for `extra/libfprint` with every upstream driver plus
 `goodix5125`. It works with `fprintd` from `extra`.
 
-### 1. Get the driver source
+### 1. Driver source
 
-The package builds from the `openchicago` branch of a libfprint clone, by
-default `upstream/libfprint-mr648` next to this README. That branch is not
-public yet; it will be linked here once the upstream merge request is open.
-To build from a clone in another place:
+`makepkg` fetches the driver itself: branch `goodix5125-mr` of
+https://gitlab.freedesktop.org/RuVl/libfprint, the branch of the upstream
+merge request. To build another clone or branch instead:
 
 ```sh
-export LIBFPRINT_OPENCHICAGO_REPO=/path/to/libfprint
+export LIBFPRINT_GOODIX5125_REPO=file:///path/to/libfprint
+export LIBFPRINT_GOODIX5125_BRANCH=my-branch
 ```
 
 ### 2. Build and install
@@ -62,8 +63,16 @@ sudo systemctl restart fprintd
 pacman -Q libfprint-goodix5125-git
 ```
 
-`makepkg` runs the libfprint test suite before packaging. To update later,
-pull the branch, run the same commands again and restart fprintd.
+`makepkg` runs the libfprint unit tests before packaging (the umockdev driver
+tests need introspection, which the package does not build). The version
+(`1.94.100.rN.gHASH`) names the commit it was built from.
+
+To update later, run the same commands again in `packaging/arch`: `makepkg`
+fetches the latest commit of the branch. Then restart fprintd. Enrolled
+prints and the driver state in `/var/lib/fprint` are kept, so there is no
+need to enrol again.
+Each build leaves its `*.pkg.tar.zst` in `packaging/arch/` under its own
+name; keep the previous one to go back with `sudo pacman -U <file>`.
 
 ### 3. Pair the sensor (once)
 

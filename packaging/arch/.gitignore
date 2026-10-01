@@ -4,3 +4,4 @@
 /libfprint/
 *.pkg.tar.*
 *.log
+/libfprint-goodix5125/

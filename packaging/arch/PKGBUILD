@@ -1,17 +1,19 @@
 # libfprint with the goodix5125 driver (27c6:5125, HONOR MagicBook 16) on the
-# openchicago matcher: branch `openchicago` of the local clone
-# upstream/libfprint-mr648 (upstream libfprint + MR !648 + our changes).
+# openchicago matcher: branch goodix5125-mr of the merge request
+# https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/669
 #
 # Drop-in replacement of extra/libfprint (same drivers=all, same soname), for
-# fprintd from extra.  Build: `makepkg -si` in this directory.  Another clone
-# location: LIBFPRINT_OPENCHICAGO_REPO=/path/to/clone makepkg -si
+# fprintd from extra.  Build: `makepkg -si` in this directory.  Another
+# repository or branch:
+#   LIBFPRINT_GOODIX5125_REPO=file:///path/to/clone \
+#   LIBFPRINT_GOODIX5125_BRANCH=branch makepkg -si
 
 pkgname=libfprint-goodix5125-git
 _pkgname=libfprint
-pkgver=1.94.100.r12.g3caf7f0
+pkgver=1.94.100.r13.gd640676
 pkgrel=1
 pkgdesc="Library for fingerprint readers, with the Goodix 27c6:5125 driver (openchicago)"
-url="https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/648"
+url="https://gitlab.freedesktop.org/libfprint/libfprint/-/merge_requests/669"
 arch=(x86_64)
 license=(LGPL-2.1-or-later)
 # as extra/libfprint 1.94.100-1
@@ -34,12 +36,14 @@ optdepends=('fprintd: D-Bus daemon and PAM module for fingerprint login')
 # makepkg turns the bare soname into libfprint-2.so=2-64, which fprintd needs
 provides=("$_pkgname=${pkgver%%.r*}" libfprint-2.so)
 conflicts=("$_pkgname")
-_repo="${LIBFPRINT_OPENCHICAGO_REPO:-$startdir/../../upstream/libfprint-mr648}"
-source=("$_pkgname::git+file://$_repo#branch=openchicago")
+_srcname=libfprint-goodix5125
+_repo="${LIBFPRINT_GOODIX5125_REPO:-https://gitlab.freedesktop.org/RuVl/libfprint.git}"
+_branch="${LIBFPRINT_GOODIX5125_BRANCH:-goodix5125-mr}"
+source=("$_srcname::git+$_repo#branch=$_branch")
 b2sums=('SKIP')
 
 pkgver() {
-  cd $_pkgname
+  cd $_srcname
   # 1.94.100 (meson project version) + commits of this branch since v1.94.100
   local base count
   base=$(sed -n "s/^ *version: '\([0-9.]*\)'.*/\1/p" meson.build | head -1)
@@ -65,13 +69,13 @@ build() {
     -D udev_hwdb=enabled
   )
 
-  arch-meson $_pkgname build "${meson_options[@]}"
+  arch-meson $_srcname build "${meson_options[@]}"
   meson compile -C build
 }
 
 check() {
-  # umockdev-based driver tests are skipped when umockdev is missing; the
-  # offline goodix5125-algo test needs recorded frames (GOODIX5125_TEST_FRAMES)
+  # unit tests only: the umockdev driver tests need the introspection
+  # bindings, disabled above
   meson test -C build --print-errorlogs
 }
 
