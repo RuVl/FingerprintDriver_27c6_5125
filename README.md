@@ -143,7 +143,11 @@ them.
 ### Troubleshooting
 
 - "Device disabled to prevent overheating": libfprint limits how long a
-  sensor stays active. Wait a minute and try again.
+  sensor stays active unless the driver declares it always-on. The driver
+  does that since the MCU waits for the finger on its own, so a lock screen
+  can keep the sensor armed indefinitely. If the message still appears after
+  10 minutes or so on a lock screen, the installed package predates this
+  change: update it as described in step 2.
 - Debug log of the driver:
 
   ```sh
