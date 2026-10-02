@@ -8,17 +8,14 @@ __pycache__/
 win-driver/
 Fingerprint_*.zip
 
-# --- локальные данные и логи (см. CLAUDE.md) ---
+# --- локальные данные и логи ---
 dumps/
 SYSTEM_CHANGES.local.md
 *.local.md
 
-# --- локально распакованные зависимости (не в систему) ---
+# --- локально распакованные зависимости (не в систему), их ждёт
+#     tools/record_umockdev_5125.sh ---
 deps/
-
-# --- форк libfprint — ОТДЕЛЬНЫЙ git-репозиторий (ветка buildpackage),
-#     ведётся своей историей; во внешний репозиторий не встраиваем ---
-libfprint/
 
 # --- скомпилированные бинарники и производные данные harness ---
 tools/algo/algo_enroll
@@ -37,7 +34,7 @@ tools/algo/.port-*/
 tools/algo/oracle_feat
 tools/algo/reeval_difftest
 
-# --- чужой upstream-код (клон ветки MR libfprint!648), ведётся своим git ---
+# --- клон libfprint с драйвером (ветка goodix5125-mr = MR !669), ведётся своим git ---
 upstream/
 tools/algo/oracle_pp
 openchicago/tests/build/

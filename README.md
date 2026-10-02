@@ -176,7 +176,7 @@ install the udev rule:
 |---|---|
 | `openchicago/` | ChicagoHS matcher in C: preprocessing, features, enrolment, identify, template study. Meson project with unit tests. |
 | `tools/goodix5125/` | Python protocol library: USB framing, MCU commands, TLS-PSK server, image decoding. |
-| `tools/*.py`, `tools/*.sh` | Probing (read-only), PSK provisioning, TLS check, capture, finger detection tests, dataset collection, libfprint test helpers, umockdev recording (`record_umockdev_5125.sh`). |
+| `tools/*.py`, `tools/*.sh` | Probing (read-only), PSK provisioning, TLS check, capture, finger detection tests, dataset collection, umockdev recording (`record_umockdev_5125.sh`). |
 | `tools/wbgen/` | Builds the white-box PSK container the sensor stores, by running the routine from the Windows driver's `gfusb.dll` under Unicorn (reference for the driver's own implementation). |
 | `tools/fwre/` | Analysis of the ST411 MCU firmware: reads the image and emulates its PSK unwrap. |
 | `tools/tune/` | Offline evaluation of matching approaches on the dataset. |
