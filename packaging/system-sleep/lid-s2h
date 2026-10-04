@@ -1,0 +1,187 @@
+#!/bin/bash
+# suspend-then-hibernate для HONOR MagicBook 16 (Cezanne, SMU 64.45).
+#
+# Будильник RTC из s0i3 на этой прошивке не работает, а пробуждение по
+# низкому заряду systemd не распознаёт (ждёт DMI wake type "APM Timer").
+# Поэтому решение принимает этот хук. Будит систему EC через GPIO 18:
+# на батарее раз в 1-4 мин, на зарядке примерно раз в минуту.
+#
+# После каждого пробуждения при закрытой крышке, если его вызвала не
+# кнопка питания:
+#   - на батарее, когда прошло DELAY секунд, заряд упал на DROP_PCT
+#     процентов или опустился до LOW_PCT, планирует гибернацию
+#     через systemctl (обычный путь: logind, plymouth);
+#   - иначе усыпляет систему снова, не размораживая сессию.
+# Открытая крышка или кнопка питания дают обычное пробуждение.
+#
+# Хук работает только для suspend-then-hibernate (закрытие крышки).
+# systemd убивает хуки, которые выполняются дольше 90 с по CLOCK_MONOTONIC
+# (время сна не считается), поэтому после BUDGET секунд бодрствования хук
+# выходит и просит systemd усыпить систему заново через 5 с.
+
+DELAY=3600     # сколько секунд на батарее спать в RAM до гибернации
+DROP_PCT=10    # на сколько процентов может упасть заряд за это время
+LOW_PCT=10     # заряд, при котором гибернация начинается сразу
+BUDGET=55      # секунд работы хука в одной фазе post (лимит systemd 90)
+
+STATE=/run/lid-s2h
+SELF=/usr/lib/systemd/system-sleep/lid-s2h
+
+log() { /usr/bin/logger -t lid-s2h -- "$*"; }
+
+lid_closed() { grep -q closed /proc/acpi/button/lid/*/state 2>/dev/null; }
+on_ac()      { [ "$(cat /sys/class/power_supply/ACAD/online 2>/dev/null)" = 1 ]; }
+capacity()   { cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo 100; }
+now()        { date +%s; }   # реальное время, идёт и во сне
+mono()       { /usr/bin/python3 -c 'import time; print(int(time.monotonic()))'; }
+
+# Сумма счётчиков пробуждений кнопки питания (PNP0C0C).
+pwrbtn_count() {
+    local n sum=0 f
+    for f in /sys/class/wakeup/*/name; do
+        [ "$(cat "$f")" = PNP0C0C:00 ] || continue
+        n=$(cat "${f%/name}/event_count" 2>/dev/null) && sum=$((sum + n))
+    done
+    echo "$sum"
+}
+
+reset_state() { rm -rf "$STATE"; }
+
+# Для журнала: питание, заряд и сколько уже на батарее.
+power_desc() {
+    local since
+    if on_ac; then
+        echo "зарядка, $(capacity)%"
+    elif since=$(cat "$STATE/battery_since" 2>/dev/null); then
+        echo "батарея, $(capacity)% (было $(cat "$STATE/battery_start_pct" 2>/dev/null)%), $(( ($(now) - since) / 60 )) мин"
+    else
+        echo "батарея, $(capacity)%"
+    fi
+}
+
+# Отсчёт на батарее: запоминаем момент и заряд, когда впервые увидели
+# батарею; на зарядке сбрасываем.
+track_battery() {
+    mkdir -p "$STATE"
+    if on_ac; then
+        rm -f "$STATE/battery_since" "$STATE/battery_start_pct"
+    elif [ ! -s "$STATE/battery_since" ]; then
+        now >"$STATE/battery_since"
+        capacity >"$STATE/battery_start_pct"
+    fi
+}
+
+should_hibernate() {
+    on_ac && return 1
+    local since start cap
+    since=$(cat "$STATE/battery_since" 2>/dev/null) || return 1
+    start=$(cat "$STATE/battery_start_pct" 2>/dev/null) || return 1
+    cap=$(capacity)
+    if [ "$cap" -le "$LOW_PCT" ]; then
+        log "заряд ${cap}% <= ${LOW_PCT}%"
+        return 0
+    fi
+    if [ $(( start - cap )) -ge "$DROP_PCT" ]; then
+        log "заряд упал на $(( start - cap ))% (${start}% -> ${cap}%)"
+        return 0
+    fi
+    if [ $(( $(now) - since )) -ge "$DELAY" ]; then
+        log "на батарее $(( $(now) - since )) с >= ${DELAY} с, заряд ${cap}%"
+        return 0
+    fi
+    return 1
+}
+
+# Запускается через 5 с из transient-таймера, когда сессия уже разморожена
+# и systemd-sleep закончил: тогда logind примет новую операцию.
+act() {
+    local what=$1 i
+    if ! lid_closed; then
+        log "act $what: крышка открыта, отмена"
+        reset_state
+        return 0
+    fi
+    if [ "$what" = hibernate ] && on_ac; then
+        what=resleep   # зарядку подключили, пока ждали
+    fi
+    for i in 1 2 3 4 5; do
+        if [ "$what" = hibernate ]; then
+            /usr/bin/systemctl hibernate --check-inhibitors=no && return 0
+        else
+            # маркер: следующий pre продолжает отсчёт, а не начинает новый
+            mkdir -p "$STATE" && touch "$STATE/continue"
+            /usr/bin/systemctl suspend-then-hibernate --check-inhibitors=no && return 0
+        fi
+        sleep 3
+    done
+    log "act $what: не удалось запустить операцию"
+}
+
+schedule() {
+    /usr/bin/systemd-run --quiet --collect --unit="lid-s2h-$1" \
+        --on-active=5s --timer-property=AccuracySec=1s \
+        "$SELF" act "$1" || log "systemd-run $1 не удался"
+}
+
+case "$1" in
+    act) act "$2"; exit 0 ;;
+esac
+
+[ "$2" = suspend-then-hibernate ] || exit 0
+
+case "${SYSTEMD_SLEEP_ACTION}/$1" in
+    suspend/pre)
+        # Отсчёт продолжается, только если сон заказали мы сами (act resleep)
+        # меньше двух минут назад. Иначе это новое закрытие крышки.
+        if [ -e "$STATE/continue" ] && [ $(( $(now) - $(stat -c %Y "$STATE/continue") )) -lt 120 ]; then
+            rm -f "$STATE/continue"
+        else
+            reset_state
+        fi
+        track_battery
+        pwrbtn_count >"$STATE/pwrbtn"
+        log "сон: $(power_desc)"
+        ;;
+
+    suspend/post)
+        start=$(mono)
+        fails=0
+        while :; do
+            if ! lid_closed; then
+                log "крышка открыта, обычное пробуждение"
+                reset_state
+                break
+            fi
+            if [ "$(pwrbtn_count)" != "$(cat "$STATE/pwrbtn" 2>/dev/null)" ]; then
+                log "кнопка питания, обычное пробуждение"
+                reset_state
+                break
+            fi
+
+            track_battery
+            log "пробуждение при закрытой крышке: $(power_desc)"
+            if should_hibernate; then
+                schedule hibernate
+                break
+            fi
+            if [ $(( $(mono) - start )) -ge "$BUDGET" ]; then
+                log "лимит времени хука, сон заново через systemd"
+                schedule resleep
+                break
+            fi
+
+            if echo mem >/sys/power/state 2>/dev/null; then
+                fails=0
+            else
+                fails=$((fails + 1))
+                log "повторный сон не удался ($fails)"
+                if [ "$fails" -ge 3 ]; then
+                    schedule resleep
+                    break
+                fi
+                sleep 2
+            fi
+        done
+        ;;
+esac
+exit 0

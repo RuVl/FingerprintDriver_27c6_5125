@@ -24,6 +24,10 @@ are kept, and both are credited with `Co-authored-by:` in the commits.
   unusable touches, `FP_DEVICE_RETRY_CENTER_FINGER` when a touch covers an
   area that is already enrolled);
 - autosuspend hwdb entry; the device is removed from the unsupported list.
+- system suspend: a running verify or identify is kept over a suspend (the
+  finger wait is stopped and armed again on resume, after the finger is
+  lifted); an enrolment is cancelled. An unplugged device fails the running
+  action with `FP_DEVICE_ERROR_REMOVED` and can always be closed.
 
 ## How it works
 

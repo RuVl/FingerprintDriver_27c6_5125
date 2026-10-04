@@ -1,0 +1,14 @@
+#!/bin/sh
+# После гибернации USB переподключается, сенсор Goodix 5125 появляется в
+# fprintd новым устройством, а старое остаётся висеть занятым и считается
+# устройством по умолчанию, поэтому pam_fprintd не работает. Пока это не
+# исправлено в драйвере, перезапускаем fprintd: новый процесс видит только
+# реальное устройство.
+
+case "${SYSTEMD_SLEEP_ACTION:-$2}/$1" in
+    hibernate/post|hybrid-sleep/post)
+        /usr/bin/systemctl --no-block restart fprintd.service
+        /usr/bin/logger -t fprintd-after-hibernate "fprintd перезапущен"
+        ;;
+esac
+exit 0
