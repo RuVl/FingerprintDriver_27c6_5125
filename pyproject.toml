@@ -3,7 +3,7 @@ name = "fingerprintdriver-27c6-5125-tools"
 version = "0.1.0"
 description = "Protocol, pairing and analysis tools for the Goodix 27c6:5125 fingerprint sensor"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"  # ssl TLS-PSK (tools/goodix5125/tls.py)
 dependencies = [
     "capstone>=5.0",               # tools/fwre: firmware disassembly
     "numpy>=2.0",

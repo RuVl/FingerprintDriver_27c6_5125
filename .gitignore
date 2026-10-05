@@ -42,3 +42,4 @@ openchicago/tests/build/
 # --- дизассемблерные листинги проприетарной DLL (не распространять) ---
 tools/algo/re/**/*.asm
 tools/algo/re/*.asm
+tools/povprobe/povprobe.efi

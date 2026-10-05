@@ -128,6 +128,33 @@ auth sufficient pam_fprintd.so max-tries=3 timeout=15
 
 The password still works after three failed touches or the timeout.
 
+### 6. Unlock by pressing the power button (optional, experimental)
+
+The sensor is the power button. When it is pressed with a finger, the sensor
+captures the finger by itself and keeps the frames for about 3 minutes; the
+first fingerprint check after that (lock screen, login) can then succeed
+without a second touch, as on Windows. It works after power-off and after
+hibernation. The code is on the branch `goodix5125-pov` (not in the merge
+request yet), and it is off unless enabled:
+
+```sh
+cd packaging/arch
+LIBFPRINT_GOODIX5125_BRANCH=goodix5125-pov makepkg -si -C
+cd ../..
+sudo install -m644 udev/71-goodix-5125-pov.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo install -Dm644 packaging/fprintd/power-button-unlock.conf \
+  /etc/systemd/system/fprintd.service.d/power-button-unlock.conf
+sudo systemctl daemon-reload && sudo systemctl restart fprintd
+```
+
+The udev rule keeps the sensor out of USB autosuspend, which would drop the
+frames. **Security:** the driver cannot tell a login from any other request,
+so for about 3 minutes after such a press the first fingerprint request of
+any kind (also `sudo` or polkit) is answered without a touch. Disable it by
+removing the drop-in and restarting fprintd. How it was found and measured:
+`tools/povprobe/README.md`, `tools/algo/re/notes/90-pov-image.md`.
+
 ### Uninstall
 
 ```sh

@@ -1,0 +1,6 @@
+# Goodix 27c6:5125 (HONOR MagicBook 16): keep the sensor out of USB runtime
+# autosuspend. When the power button is pressed with a finger, the MCU keeps
+# the captured frame (POV) for ~180 s, but drops it as soon as the USB link is
+# suspended and resumed. 60-autosuspend.rules enables autosuspend through
+# ID_AUTOSUSPEND=1 from the libfprint hwdb; this rule runs after it.
+ACTION!="remove", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="27c6", ATTR{idProduct}=="5125", ATTR{power/control}="on"
