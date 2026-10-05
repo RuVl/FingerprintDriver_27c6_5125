@@ -134,13 +134,10 @@ The sensor is the power button. When it is pressed with a finger, the sensor
 captures the finger by itself and keeps the frames for about 3 minutes; the
 first fingerprint check after that (lock screen, login) can then succeed
 without a second touch, as on Windows. It works after power-off and after
-hibernation. The code is on the branch `goodix5125-pov` (not in the merge
-request yet), and it is off unless enabled:
+hibernation. It is part of the driver (package built from `a9286cc` or later)
+and is off unless enabled:
 
 ```sh
-cd packaging/arch
-LIBFPRINT_GOODIX5125_BRANCH=goodix5125-pov makepkg -si -C
-cd ../..
 sudo install -m644 udev/71-goodix-5125-pov.rules /etc/udev/rules.d/
 sudo udevadm control --reload
 sudo install -Dm644 packaging/fprintd/power-button-unlock.conf \

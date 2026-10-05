@@ -28,6 +28,7 @@ are kept, and both are credited with `Co-authored-by:` in the commits.
   finger wait is stopped and armed again on resume, after the finger is
   lifted); an enrolment is cancelled. An unplugged device fails the running
   action with `FP_DEVICE_ERROR_REMOVED` and can always be closed.
+- optional unlock by the power-button press (off by default, see below).
 
 ## How it works
 
@@ -63,6 +64,33 @@ The protocol, pairing, state handling and device emulation are documented in
   deterministic (fixed TLS randomness, all-zero PSK, temporary state), so a
   recorded session replays byte for byte.
 
+## Power-button unlock (optional)
+
+The sensor is the power button. When the laptop is off or hibernated and the
+button is pressed with a finger, the MCU captures up to three frames by
+itself and keeps them for about 180 s, or until the USB link is suspended;
+the MCU-state reply then has a flag set. The frames are read after a TLS
+handshake with `0xd2` (one TLS record per frame, marker `0xaa`,
+CRC-32/MPEG-2), before anything else touches the sensor.
+
+With `GOODIX5125_POWER_BUTTON_UNLOCK=1` in fprintd's environment, the first
+verify or identify after that tries these frames before waiting for a touch:
+a match completes the action at once, anything else is not reported and the
+touch wait follows. Off by default, because the driver cannot tell what an
+action is for: for about 180 s after such a press, the first fingerprint
+request of any kind (also sudo or polkit) is answered without a touch. It
+also needs a udev rule that keeps the device out of runtime autosuspend
+(both libfprint's and systemd's hwdb enable it for 27c6:5125); the rule is in
+the driver README.
+
+On the tested unit: power off, press the button with the enrolled finger,
+LUKS password, autologin, then `fprintd-verify` without touching the sensor
+gives `verify-match` (first frame, quality 99, coverage 100). After
+hibernation the lock screen unlocks by itself. One detail: a result reported
+from inside the vfunc is dropped by fprintd's clients (they ignore
+`VerifyStatus` until `VerifyStart` has returned), so the match is reported
+from the main loop.
+
 ## Tests
 
 - `goodix5125` (umockdev, `tests/goodix5125/custom.py`): identify with an
@@ -77,6 +105,11 @@ The protocol, pairing, state handling and device emulation are documented in
   synthetic data;
 - `goodix5125-tls`: the TLS-PSK memory-BIO transport against an in-process
   OpenSSL client, and the deterministic mode;
+- `goodix5125-device`: the capture cycle against a fake transport (suspend
+  and resume, cancellation, removal), and the power-button frames with a
+  scripted matcher: a match completes verify and identify without any FDT
+  command and only after `fp_device_verify ()` returned, unusable or
+  non-matching frames fall back to the touch wait, old frames are dropped;
 - `udev-hwdb`: passes with the new hwdb entry.
 
 On hardware, the driver has been in daily use for about a week with fprintd
@@ -120,3 +153,4 @@ files, and the sources are formatted with `scripts/uncrustify.cfg`.
 1. `goodix5125: Add the openchicago ChicagoHS matcher`
 2. `goodix5125: Add support for Goodix 27c6:5125` (driver, build, hwdb)
 3. `tests: Add goodix5125 unit tests` (unit tests and the umockdev recording)
+4. `goodix5125: Optionally match the frames captured on a power-button press`
