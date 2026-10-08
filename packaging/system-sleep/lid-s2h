@@ -47,6 +47,26 @@ pwrbtn_count() {
 
 reset_state() { rm -rf "$STATE"; }
 
+# Снимок счётчиков всех источников пробуждения перед сном.
+ws_snapshot() {
+    local w
+    mkdir -p "$STATE"
+    for w in /sys/class/wakeup/wakeup*; do
+        echo "${w##*/} $(cat "$w/event_count" 2>/dev/null)"
+    done >"$STATE/ws"
+}
+
+# Для журнала: IRQ пробуждения и источники, чей счётчик вырос со снимка.
+wake_desc() {
+    local id old new out=
+    while read -r id old; do
+        new=$(cat "/sys/class/wakeup/$id/event_count" 2>/dev/null) || continue
+        [ "$new" = "$old" ] && continue
+        out="$out $(cat "/sys/class/wakeup/$id/name")+$((new - old))"
+    done <"$STATE/ws" 2>/dev/null
+    echo "IRQ $(cat /sys/power/pm_wakeup_irq 2>/dev/null || echo ?), источники:${out:- нет}"
+}
+
 # Для журнала: питание, заряд и сколько уже на батарее.
 power_desc() {
     local since
@@ -140,6 +160,7 @@ case "${SYSTEMD_SLEEP_ACTION}/$1" in
         fi
         track_battery
         pwrbtn_count >"$STATE/pwrbtn"
+        ws_snapshot
         log "сон: $(power_desc)"
         ;;
 
@@ -148,18 +169,21 @@ case "${SYSTEMD_SLEEP_ACTION}/$1" in
         fails=0
         while :; do
             if ! lid_closed; then
-                log "крышка открыта, обычное пробуждение"
+                log "крышка открыта, обычное пробуждение; $(wake_desc)"
                 reset_state
                 break
             fi
             if [ "$(pwrbtn_count)" != "$(cat "$STATE/pwrbtn" 2>/dev/null)" ]; then
-                log "кнопка питания, обычное пробуждение"
-                reset_state
+                # Бывает и без нажатия (ночью на зарядке). Отсчёт не сбрасываем:
+                # если logind при закрытой крышке усыпит систему в течение
+                # 2 мин, следующий pre его продолжит.
+                log "кнопка питания, обычное пробуждение; $(wake_desc)"
+                touch "$STATE/continue"
                 break
             fi
 
             track_battery
-            log "пробуждение при закрытой крышке: $(power_desc)"
+            log "пробуждение при закрытой крышке: $(power_desc); $(wake_desc)"
             if should_hibernate; then
                 schedule hibernate
                 break
@@ -170,6 +194,7 @@ case "${SYSTEMD_SLEEP_ACTION}/$1" in
                 break
             fi
 
+            ws_snapshot
             if echo mem >/sys/power/state 2>/dev/null; then
                 fails=0
             else
