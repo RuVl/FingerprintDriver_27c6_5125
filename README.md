@@ -172,6 +172,16 @@ them.
   can keep the sensor armed indefinitely. If the message still appears after
   10 minutes or so on a lock screen, the installed package predates this
   change: update it as described in step 2.
+- Fingerprint stops working after suspend or hibernation, and PAM reports
+  "Authentication service cannot retrieve authentication info": the sensor
+  was re-enumerated on resume, and fprintd kept the old device open next to
+  the new one (a libfprint core issue, see `docs/core-suspend-removed/`).
+  Install the udev rule that restarts fprintd when the sensor comes back:
+
+  ```sh
+  sudo install -m644 udev/72-goodix-5125-replug.rules /etc/udev/rules.d/
+  sudo udevadm control --reload
+  ```
 - Debug log of the driver:
 
   ```sh
@@ -206,7 +216,8 @@ install the udev rule:
 | `tools/tune/` | Offline evaluation of matching approaches on the dataset. |
 | `tools/algo/` | Reference harness: loads the vendor Windows DLL natively (no wine) to compare results with openchicago. Notes are in `tools/algo/re/notes/`. |
 | `packaging/arch/` | `PKGBUILD` for libfprint with the `goodix5125` driver, a drop-in for `extra/libfprint`. |
-| `udev/` | udev rule that gives the logged-in user raw USB access for the prototype tools. |
+| `udev/` | udev rules: raw USB access for the prototype tools (70), no autosuspend for the power-button unlock (71), fprintd restart when the sensor is re-enumerated after sleep (72). |
+| `packaging/system-sleep/` | systemd-sleep hook for a working suspend-then-hibernate on the MagicBook 16 (in Russian). |
 | `docs/` | Stage-by-stage notes and results (in Russian), and the upstream MR description. |
 
 ## Python tools
