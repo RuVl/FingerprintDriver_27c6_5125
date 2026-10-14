@@ -7,6 +7,8 @@
 # repository or branch:
 #   LIBFPRINT_GOODIX5125_REPO=file:///path/to/clone \
 #   LIBFPRINT_GOODIX5125_BRANCH=branch makepkg -si
+# in a copy of this directory without the libfprint-goodix5125 clone: makepkg
+# reuses a clone next to the PKGBUILD (before SRCDEST) and refuses another URL.
 
 pkgname=libfprint-goodix5125-git
 _pkgname=libfprint
@@ -39,8 +41,14 @@ conflicts=("$_pkgname")
 _srcname=libfprint-goodix5125
 _repo="${LIBFPRINT_GOODIX5125_REPO:-https://gitlab.freedesktop.org/RuVl/libfprint.git}"
 _branch="${LIBFPRINT_GOODIX5125_BRANCH:-goodix5125-mr}"
-source=("$_srcname::git+$_repo#branch=$_branch")
-b2sums=('SKIP')
+# libfprint core fix, not part of the merge request: a device removed while
+# suspended (re-enumerated across hibernation) can be closed again, so
+# fprintd drops it instead of keeping it next to the new one
+# (docs/core-suspend-removed/core-issue.md)
+source=("$_srcname::git+$_repo#branch=$_branch"
+        libfprint-suspend-removed.patch)
+b2sums=('SKIP'
+        '42c09f5ff264a61c06bc7cba28c55fed54588f75978be60d72bc660c272fadd79b04302eb79e619b9783e1344cb5e1bf7faa7ad193c6efc3ed99a1bd5ec5e41a')
 
 pkgver() {
   cd $_srcname
@@ -53,6 +61,11 @@ pkgver() {
     count=$(git rev-list --count HEAD)
   fi
   printf '%s.r%s.g%s' "$base" "$count" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd $_srcname
+  git apply "$srcdir/libfprint-suspend-removed.patch"
 }
 
 build() {

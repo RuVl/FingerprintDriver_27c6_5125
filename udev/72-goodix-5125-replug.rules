@@ -1,13 +1,14 @@
-# Goodix 27c6:5125: restart fprintd when the sensor is re-enumerated.
+# Goodix 27c6:5125: check fprintd when the sensor is re-enumerated.
 #
 # libfprint sets power/persist=0, so after hibernation, and sometimes after
 # s2idle, the kernel drops the sensor and adds it again. If fprintd had the
-# old device open (a lock screen keeps a PAM verify running), libfprint can
-# never close it (docs/core-suspend-removed/core-issue.md): fprintd keeps the
-# dead device next to the new one and pam_fprintd fails with "Authentication
-# service cannot retrieve authentication info". A fresh fprintd only sees the
-# new device. At boot fprintd is not running yet, so nothing is restarted.
+# old device open, libfprint may never close it
+# (docs/core-suspend-removed/core-issue.md): fprintd keeps the dead device
+# next to the new one and pam_fprintd fails with "Authentication service
+# cannot retrieve authentication info". goodix5125-replug.service
+# (packaging/fprintd/) restarts fprintd in that case, once the sleep
+# operation is over. At boot fprintd is not running yet: nothing happens.
 #
 #   sudo install -m644 72-goodix-5125-replug.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="27c6", ATTR{idProduct}=="5125", RUN+="/bin/sh -c '/usr/bin/systemctl -q is-active fprintd.service || exit 0; /usr/bin/systemctl --no-block restart fprintd.service; /usr/bin/logger -t goodix5125-replug sensor re-enumerated, fprintd restarted'"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="27c6", ATTR{idProduct}=="5125", RUN+="/usr/bin/systemctl --no-block start goodix5125-replug.service"

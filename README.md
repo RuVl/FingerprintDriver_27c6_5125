@@ -175,12 +175,17 @@ them.
 - Fingerprint stops working after suspend or hibernation, and PAM reports
   "Authentication service cannot retrieve authentication info": the sensor
   was re-enumerated on resume, and fprintd kept the old device open next to
-  the new one (a libfprint core issue, see `docs/core-suspend-removed/`).
-  Install the udev rule that restarts fprintd when the sensor comes back:
+  the new one (a libfprint core issue, see `docs/core-suspend-removed/`; the
+  package applies the fix). As a safety net, a udev rule restarts fprintd
+  when it shows more than one device after the sensor came back, and a
+  drop-in keeps a hung fprintd from delaying shutdown by 90 s:
 
   ```sh
   sudo install -m644 udev/72-goodix-5125-replug.rules /etc/udev/rules.d/
-  sudo udevadm control --reload
+  sudo install -m644 packaging/fprintd/goodix5125-replug.service /etc/systemd/system/
+  sudo install -Dm644 packaging/fprintd/stop-timeout.conf \
+    /etc/systemd/system/fprintd.service.d/stop-timeout.conf
+  sudo systemctl daemon-reload && sudo udevadm control --reload
   ```
 - Debug log of the driver:
 

@@ -1,0 +1,33 @@
+# Restart fprintd when it keeps a dead Goodix 27c6:5125 device.
+# Started by udev/72-goodix-5125-replug.rules when the sensor is added.
+#
+# libfprint cannot close a device that was removed while suspended
+# (docs/core-suspend-removed/core-issue.md): fprintd then exports the dead
+# device next to the re-enumerated one and pam_fprintd may pick it.  Only in
+# that case (more than one device) fprintd is restarted: a needless restart
+# right after resume would kill the first verify, and with it the frames of
+# a power-button press, which the MCU hands out only once.
+#
+# The sensor comes back while the sleep operation is still running (resume
+# from hibernation, or lid-s2h re-suspending in a loop); the ordering delays
+# the check until the sleep service and target have finished (a start job
+# waits for a running job of a unit it is ordered after), the pause lets
+# fprintd process the removal and the new device.
+#
+#   sudo install -m644 goodix5125-replug.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+[Unit]
+Description=Restart fprintd if it kept a removed fingerprint sensor
+After=systemd-suspend.service systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '\
+  sleep 2; \
+  systemctl -q is-active fprintd.service || exit 0; \
+  n=$$(busctl call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+       net.reactivated.Fprint.Manager GetDevices | cut -d" " -f2); \
+  [ "$${n:-0}" -gt 1 ] || exit 0; \
+  logger -t goodix5125-replug "fprintd has $$n devices, restarting it"; \
+  systemctl try-restart fprintd.service'

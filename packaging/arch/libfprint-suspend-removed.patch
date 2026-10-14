@@ -1,0 +1,42 @@
+diff --git a/libfprint/fp-device.c b/libfprint/fp-device.c
+index 115063d..cbd2258 100644
+--- a/libfprint/fp-device.c
++++ b/libfprint/fp-device.c
+@@ -922,7 +922,8 @@ fp_device_close (FpDevice           *device,
+       return;
+     }
+ 
+-  if (priv->current_task || priv->is_suspended)
++  /* A removed device can always be closed, it will not be resumed. */
++  if (priv->current_task || (priv->is_suspended && !priv->is_removed))
+     {
+       g_task_return_error (task,
+                            fpi_device_error_new (FP_DEVICE_ERROR_BUSY));
+@@ -1063,6 +1064,8 @@ fp_device_resume (FpDevice           *device,
+ 
+   if (priv->is_removed)
+     {
++      /* Nothing to resume, but the device must not stay suspended. */
++      priv->is_suspended = FALSE;
+       g_task_return_error (task,
+                            fpi_device_error_new (FP_DEVICE_ERROR_REMOVED));
+       return;
+diff --git a/libfprint/fpi-device.c b/libfprint/fpi-device.c
+index 9500b3a..048abc6 100644
+--- a/libfprint/fpi-device.c
++++ b/libfprint/fpi-device.c
+@@ -786,6 +786,14 @@ fpi_device_remove (FpDevice *device)
+                                (GCallback) emit_removed_on_task_completed,
+                                device,
+                                G_CONNECT_SWAPPED);
++
++      /* A suspended action has nothing in flight that could fail. */
++      if (priv->is_suspended)
++        {
++          if (!priv->current_cancellation_reason)
++            priv->current_cancellation_reason = fpi_device_error_new (FP_DEVICE_ERROR_REMOVED);
++          g_cancellable_cancel (priv->current_cancellable);
++        }
+     }
+   else
+     {
